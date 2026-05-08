@@ -1,0 +1,601 @@
+<div class="analytics-page">
+
+  <!-- ── Page Header ─────────────────────────────────────────────────────── -->
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Analytics &amp; Reports</h1>
+      <p class="page-subtitle">Operational insights — user activity, camera performance &amp; alert trends</p>
+    </div>
+    <div class="header-actions">
+      <!-- Year filter -->
+      <div class="filter-group">
+        <label>Year</label>
+        <select class="form-control form-control-sm"
+                [ngModel]="selectedYear()"
+                (ngModelChange)="selectedYear.set(+$event)">
+          @for (y of years; track y) {
+            <option [value]="y">{{ y }}</option>
+          }
+        </select>
+      </div>
+      <!-- Month filter -->
+      <div class="filter-group">
+        <label>Month</label>
+        <select class="form-control form-control-sm"
+                [ngModel]="selectedMonth()"
+                (ngModelChange)="selectedMonth.set(+$event)">
+          @for (m of months; track m.value) {
+            <option [value]="m.value">{{ m.label }}</option>
+          }
+        </select>
+      </div>
+      <button class="btn btn-ghost btn-sm" (click)="exportToExcel()" [disabled]="exporting()" title="Export analytics report to Excel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        {{ exporting() ? 'Exporting…' : 'Export Excel' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Overview KPI Cards ──────────────────────────────────────────────── -->
+  <div class="kpi-grid">
+    <div class="kpi-card kpi-blue">
+      <div class="kpi-icon">⏱️</div>
+      <div class="kpi-body">
+        <div class="kpi-value">{{ overviewKpis().totalHours | number }}</div>
+        <div class="kpi-label">Total Active Hours</div>
+        <div class="kpi-sub">All users · {{ selectedYear() }}</div>
+      </div>
+    </div>
+    <div class="kpi-card kpi-yellow">
+      <div class="kpi-icon">👁️</div>
+      <div class="kpi-body">
+        <div class="kpi-value">{{ overviewKpis().operatorHours | number }}</div>
+        <div class="kpi-label">Operator Hours</div>
+        <div class="kpi-sub">Active monitoring time</div>
+      </div>
+    </div>
+    <div class="kpi-card kpi-green">
+      <div class="kpi-icon">👤</div>
+      <div class="kpi-body">
+        <div class="kpi-value">{{ overviewKpis().viewerHours | number }}</div>
+        <div class="kpi-label">Viewer Hours</div>
+        <div class="kpi-sub">Read-only access time</div>
+      </div>
+    </div>
+    <div class="kpi-card kpi-red">
+      <div class="kpi-icon">🎯</div>
+      <div class="kpi-body">
+        <div class="kpi-value">{{ overviewKpis().totalDetections | number }}</div>
+        <div class="kpi-label">Total Detections</div>
+        <div class="kpi-sub">Across all cameras</div>
+      </div>
+    </div>
+    <div class="kpi-card kpi-orange">
+      <div class="kpi-icon">🔔</div>
+      <div class="kpi-body">
+        <div class="kpi-value">{{ overviewKpis().totalAlerts | number }}</div>
+        <div class="kpi-label">Total Alerts</div>
+        <div class="kpi-sub">{{ selectedYear() }} · all severities</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab Navigation ──────────────────────────────────────────────────── -->
+  <div class="tab-bar">
+    <button class="tab-btn" [class.active]="activeTab() === 'overview'"  (click)="setTab('overview')">
+      <span>📊</span> Overview
+    </button>
+    <button class="tab-btn" [class.active]="activeTab() === 'users'"     (click)="setTab('users')">
+      <span>👥</span> User Activity
+    </button>
+    <button class="tab-btn" [class.active]="activeTab() === 'cameras'"   (click)="setTab('cameras')">
+      <span>📹</span> Camera Detections
+    </button>
+    <button class="tab-btn" [class.active]="activeTab() === 'alerts'"    (click)="setTab('alerts')">
+      <span>🔔</span> Alert Trends
+    </button>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- TAB: OVERVIEW                                                          -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  @if (activeTab() === 'overview') {
+    <div class="tab-content" @fadeIn>
+
+      <div class="two-col-grid">
+
+        <!-- Monthly Alerts Bar Chart -->
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <h3>Monthly Alert Volume</h3>
+              <p>Total alerts dispatched per month · {{ selectedYear() }}</p>
+            </div>
+            <div class="legend-row">
+              <span class="legend-dot" style="background:var(--accent-red)"></span><span>Critical</span>
+              <span class="legend-dot" style="background:var(--accent-orange)"></span><span>High</span>
+              <span class="legend-dot" style="background:var(--accent-yellow)"></span><span>Medium</span>
+              <span class="legend-dot" style="background:var(--accent-blue)"></span><span>Low</span>
+            </div>
+          </div>
+          <div class="bar-chart-vertical">
+            @for (stat of monthlyAlertStats(); track stat.month) {
+              <div class="bar-col">
+                <div class="bar-value-label">{{ stat.total }}</div>
+                <div class="bar-stack-wrap">
+                  <div class="bar-stack" [style.height.%]="getBarWidth(stat.total, getMaxMonthlyAlerts())">
+                    @for (seg of getMonthlyAlertBarSegments(stat); track seg.color) {
+                      @if (seg.pct > 0) {
+                        <div class="bar-segment" [style.background]="seg.color" [style.flex]="seg.pct"></div>
+                      }
+                    }
+                  </div>
+                </div>
+                <div class="bar-label">{{ stat.label.split(' ')[0] }}</div>
+              </div>
+            }
+          </div>
+        </div>
+
+        <!-- Top Camera Detections Horizontal Bar -->
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <h3>Camera Detection Ranking</h3>
+              <p>Total AI detections per camera (all time)</p>
+            </div>
+          </div>
+          <div class="hbar-list">
+            @for (cam of cameraDetectionStats(); track cam.cameraId) {
+              <div class="hbar-row">
+                <div class="hbar-label">
+                  <span class="cam-dot" [class.top]="cam.cameraId === topCamera()!.cameraId">📹</span>
+                  <span class="hbar-name">{{ cam.cameraName }}</span>
+                  @if (cam.cameraId === topCamera()!.cameraId) {
+                    <span class="badge badge-warning top-badge">Top</span>
+                  }
+                </div>
+                <div class="hbar-track">
+                  <div class="hbar-fill blue" [style.width.%]="getBarWidth(cam.totalDetections, getMaxDetections())"></div>
+                </div>
+                <span class="hbar-value">{{ cam.totalDetections }}</span>
+              </div>
+            }
+          </div>
+        </div>
+
+      </div>
+
+      <!-- User Hours Overview Table -->
+      <div class="chart-card mt-20">
+        <div class="chart-header">
+          <div>
+            <h3>User Activity Summary</h3>
+            <p>Aggregated active hours · {{ selectedYear() }}{{ selectedMonth() > 0 ? ' · ' + months[selectedMonth()].label : '' }}</p>
+          </div>
+          <div class="filter-group">
+            <label>Role</label>
+            <select class="form-control form-control-sm"
+                    [ngModel]="selectedRole()"
+                    (ngModelChange)="selectedRole.set($event)">
+              <option value="all">All Roles</option>
+              <option value="Operator">Operator</option>
+              <option value="Viewer">Viewer</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Sessions</th>
+                <th>Total Hours</th>
+                <th>Activity</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (user of userHoursSummary(); track user.username; let i = $index) {
+                <tr>
+                  <td class="rank-cell">{{ i + 1 }}</td>
+                  <td>
+                    <div class="user-cell">
+                      <div class="mini-avatar" [class]="'role-' + user.role.toLowerCase()">
+                        {{ user.username.charAt(0).toUpperCase() }}
+                      </div>
+                      <span>{{ user.username }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge badge-{{ getRoleClass(user.role) }}">
+                      {{ getRoleIcon(user.role) }} {{ user.role }}
+                    </span>
+                  </td>
+                  <td>{{ user.sessions }}</td>
+                  <td class="hours-cell">{{ user.totalHours }}h</td>
+                  <td class="activity-cell">
+                    <div class="inline-bar-track">
+                      <div class="inline-bar-fill"
+                           [style.width.%]="getBarWidth(user.totalHours, getMaxUserHours())"
+                           [class]="'role-bar-' + user.role.toLowerCase()">
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  }
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- TAB: USER ACTIVITY                                                     -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  @if (activeTab() === 'users') {
+    <div class="tab-content">
+
+      <!-- Role filter -->
+      <div class="filter-bar">
+        <span class="filter-label">Filter by Role:</span>
+        <button class="filter-chip" [class.active]="selectedRole() === 'all'"      (click)="selectedRole.set('all')">All</button>
+        <button class="filter-chip" [class.active]="selectedRole() === 'Operator'" (click)="selectedRole.set('Operator')">👁️ Operator</button>
+        <button class="filter-chip" [class.active]="selectedRole() === 'Viewer'"   (click)="selectedRole.set('Viewer')">👤 Viewer</button>
+      </div>
+
+      <!-- Monthly hours per user chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <div>
+            <h3>Monthly Active Hours per User</h3>
+            <p>Hours logged per user across each month · {{ selectedYear() }}</p>
+          </div>
+          <div class="legend-row">
+            @for (user of userMonthlyHours(); track user.username) {
+              <span class="legend-dot" [style.background]="getUserMonthlyColor(user.role)"></span>
+              <span>{{ user.username }}</span>
+            }
+          </div>
+        </div>
+
+        <!-- Multi-series horizontal month chart -->
+        <div class="month-matrix">
+          <div class="month-axis">
+            @for (m of monthLabels; track m) {
+              <div class="month-axis-label">{{ m }}</div>
+            }
+          </div>
+          @for (user of userMonthlyHours(); track user.username) {
+            @if (selectedRole() === 'all' || selectedRole() === user.role) {
+              <div class="user-month-row">
+                <div class="user-month-name">
+                  <div class="mini-avatar" [class]="'role-' + user.role.toLowerCase()">
+                    {{ user.username.charAt(0).toUpperCase() }}
+                  </div>
+                  <span>{{ user.username }}</span>
+                  <span class="badge badge-{{ getRoleClass(user.role) }} badge-xs">{{ user.role }}</span>
+                </div>
+                <div class="user-month-bars">
+                  @for (hours of user.monthlyData; track $index) {
+                    <div class="month-bar-cell">
+                      <div class="month-bar-fill"
+                           [style.height.%]="getBarWidth(hours, getMaxMonthlyUserHours())"
+                           [style.background]="getUserMonthlyColor(user.role)"
+                           [title]="monthLabels[$index] + ': ' + hours + 'h'">
+                      </div>
+                      <span class="month-bar-val">{{ hours }}h</span>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+          }
+        </div>
+      </div>
+
+      <!-- Detailed sessions table -->
+      <div class="chart-card mt-20">
+        <div class="chart-header">
+          <div>
+            <h3>User Hours Detail</h3>
+            <p>Aggregated by user · filtered period</p>
+          </div>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Sessions Logged</th>
+                <th>Total Hours</th>
+                <th>Avg Hours/Session</th>
+                <th>Activity Bar</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (user of userHoursSummary(); track user.username; let i = $index) {
+                <tr>
+                  <td>
+                    <span class="rank-badge" [class.gold]="i===0" [class.silver]="i===1" [class.bronze]="i===2">
+                      {{ i + 1 }}
+                    </span>
+                  </td>
+                  <td>
+                    <div class="user-cell">
+                      <div class="mini-avatar" [class]="'role-' + user.role.toLowerCase()">
+                        {{ user.username.charAt(0).toUpperCase() }}
+                      </div>
+                      <span>{{ user.username }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge badge-{{ getRoleClass(user.role) }}">
+                      {{ getRoleIcon(user.role) }} {{ user.role }}
+                    </span>
+                  </td>
+                  <td>{{ user.sessions }}</td>
+                  <td class="hours-cell">{{ user.totalHours }}h</td>
+                  <td>{{ (user.totalHours / user.sessions).toFixed(1) }}h</td>
+                  <td class="activity-cell">
+                    <div class="inline-bar-track">
+                      <div class="inline-bar-fill"
+                           [style.width.%]="getBarWidth(user.totalHours, getMaxUserHours())"
+                           [class]="'role-bar-' + user.role.toLowerCase()">
+                      </div>
+                    </div>
+                    <span class="bar-pct">{{ getBarWidth(user.totalHours, getMaxUserHours()) }}%</span>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  }
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- TAB: CAMERA DETECTIONS                                                 -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  @if (activeTab() === 'cameras') {
+    <div class="tab-content">
+
+      <!-- Top camera highlight -->
+      @if (topCamera()) {
+        <div class="highlight-banner">
+          <div class="highlight-icon">🏆</div>
+          <div class="highlight-body">
+            <div class="highlight-title">Highest Detection Camera</div>
+            <div class="highlight-value">{{ topCamera()!.cameraName }}</div>
+            <div class="highlight-sub">{{ topCamera()!.totalDetections }} total detections · most active surveillance point</div>
+          </div>
+          <div class="highlight-stats">
+            <div class="hl-stat"><span class="hl-num red">{{ topCamera()!.fightCount }}</span><span>Fights</span></div>
+            <div class="hl-stat"><span class="hl-num orange">{{ topCamera()!.weaponCount }}</span><span>Weapons</span></div>
+            <div class="hl-stat"><span class="hl-num yellow">{{ topCamera()!.intrusionCount }}</span><span>Intrusions</span></div>
+            <div class="hl-stat"><span class="hl-num blue">{{ topCamera()!.unknownFaceCount }}</span><span>Unknown Faces</span></div>
+          </div>
+        </div>
+      }
+
+      <!-- Camera detection cards grid -->
+      <div class="camera-cards-grid">
+        @for (cam of cameraDetectionStats(); track cam.cameraId) {
+          <div class="camera-det-card" [class.top-cam]="cam.cameraId === topCamera()!.cameraId">
+            <div class="cam-det-header">
+              <div class="cam-det-name">
+                <span class="cam-icon">📹</span>
+                <span>{{ cam.cameraName }}</span>
+                @if (cam.cameraId === topCamera()!.cameraId) {
+                  <span class="badge badge-warning">🏆 Top</span>
+                }
+              </div>
+              <div class="cam-det-total">{{ cam.totalDetections }}</div>
+            </div>
+            <div class="cam-det-sub">Total Detections</div>
+
+            <!-- Stacked breakdown bars -->
+            <div class="det-breakdown">
+              @for (type of getDetectionTypeBreakdown(cam); track type.label) {
+                <div class="det-type-row">
+                  <span class="det-type-label">{{ type.label }}</span>
+                  <div class="det-type-track">
+                    <div class="det-type-fill"
+                         [style.width.%]="getBarWidth(type.count, cam.totalDetections)"
+                         [style.background]="type.color">
+                    </div>
+                  </div>
+                  <span class="det-type-count">{{ type.count }}</span>
+                </div>
+              }
+            </div>
+          </div>
+        }
+      </div>
+
+      <!-- Full table -->
+      <div class="chart-card mt-20">
+        <div class="chart-header">
+          <div>
+            <h3>Detection Breakdown Table</h3>
+            <p>Per-camera incident type breakdown</p>
+          </div>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Camera</th>
+                <th>Total</th>
+                <th>🥊 Fights</th>
+                <th>🔫 Weapons</th>
+                <th>🚨 Intrusions</th>
+                <th>👤 Unknown Faces</th>
+                <th>🚗 License Plates</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (cam of cameraDetectionStats(); track cam.cameraId) {
+                <tr [class.highlight-row]="cam.cameraId === topCamera()!.cameraId">
+                  <td>
+                    <div class="user-cell">
+                      <span>📹</span>
+                      <span>{{ cam.cameraName }}</span>
+                      @if (cam.cameraId === topCamera()!.cameraId) {
+                        <span class="badge badge-warning">Top</span>
+                      }
+                    </div>
+                  </td>
+                  <td class="hours-cell">{{ cam.totalDetections }}</td>
+                  <td><span class="count-chip red">{{ cam.fightCount }}</span></td>
+                  <td><span class="count-chip orange">{{ cam.weaponCount }}</span></td>
+                  <td><span class="count-chip yellow">{{ cam.intrusionCount }}</span></td>
+                  <td><span class="count-chip blue">{{ cam.unknownFaceCount }}</span></td>
+                  <td><span class="count-chip green">{{ cam.licensePlateCount }}</span></td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  }
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- TAB: ALERT TRENDS                                                      -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  @if (activeTab() === 'alerts') {
+    <div class="tab-content">
+
+      <div class="two-col-grid">
+
+        <!-- Monthly alert stacked bar chart -->
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <h3>Monthly Alert Trends</h3>
+              <p>Alert volume by severity · {{ selectedYear() }}</p>
+            </div>
+            <div class="legend-row">
+              <span class="legend-dot" style="background:var(--accent-red)"></span><span>Critical</span>
+              <span class="legend-dot" style="background:var(--accent-orange)"></span><span>High</span>
+              <span class="legend-dot" style="background:var(--accent-yellow)"></span><span>Medium</span>
+              <span class="legend-dot" style="background:var(--accent-blue)"></span><span>Low</span>
+            </div>
+          </div>
+
+          <div class="bar-chart-vertical">
+            @for (stat of monthlyAlertStats(); track stat.month) {
+              <div class="bar-col">
+                <div class="bar-value-label">{{ stat.total }}</div>
+                <div class="bar-stack-wrap">
+                  <div class="bar-stack" [style.height.%]="getBarWidth(stat.total, getMaxMonthlyAlerts())">
+                    @for (seg of getMonthlyAlertBarSegments(stat); track seg.color) {
+                      @if (seg.pct > 0) {
+                        <div class="bar-segment" [style.background]="seg.color" [style.flex]="seg.pct"></div>
+                      }
+                    }
+                  </div>
+                </div>
+                <div class="bar-label">{{ stat.label.split(' ')[0] }}</div>
+              </div>
+            }
+          </div>
+        </div>
+
+        <!-- Camera-wise alert horizontal bars -->
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <h3>Alerts by Camera</h3>
+              <p>Total alerts triggered per camera</p>
+            </div>
+          </div>
+          <div class="hbar-list">
+            @for (cam of cameraAlertStats(); track cam.cameraId) {
+              <div class="hbar-row">
+                <div class="hbar-label">
+                  <span>📹</span>
+                  <span class="hbar-name">{{ cam.cameraName }}</span>
+                </div>
+                <div class="hbar-track">
+                  <div class="hbar-fill red"   [style.width.%]="getBarWidth(cam.critical, getMaxCameraAlerts())" [title]="'Critical: ' + cam.critical"></div>
+                  <div class="hbar-fill orange" [style.width.%]="getBarWidth(cam.high, getMaxCameraAlerts())"    [title]="'High: ' + cam.high" style="margin-left:2px"></div>
+                </div>
+                <span class="hbar-value">{{ cam.total }}</span>
+              </div>
+            }
+          </div>
+          <div class="legend-row mt-12">
+            <span class="legend-dot" style="background:var(--accent-red)"></span><span>Critical</span>
+            <span class="legend-dot" style="background:var(--accent-orange)"></span><span>High</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Monthly detail table -->
+      <div class="chart-card mt-20">
+        <div class="chart-header">
+          <div>
+            <h3>Monthly Alert Detail</h3>
+            <p>Breakdown by severity per month · {{ selectedYear() }}</p>
+          </div>
+          <div class="total-chip">
+            Total: <strong>{{ totalAlertsFiltered() }}</strong> alerts
+          </div>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Total</th>
+                <th>🔴 Critical</th>
+                <th>🟠 High</th>
+                <th>🟡 Medium</th>
+                <th>🔵 Low</th>
+                <th>Severity Mix</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (stat of monthlyAlertStats(); track stat.month) {
+                <tr>
+                  <td><strong>{{ stat.label }}</strong></td>
+                  <td class="hours-cell">{{ stat.total }}</td>
+                  <td><span class="count-chip red">{{ stat.critical }}</span></td>
+                  <td><span class="count-chip orange">{{ stat.high }}</span></td>
+                  <td><span class="count-chip yellow">{{ stat.medium }}</span></td>
+                  <td><span class="count-chip blue">{{ stat.low }}</span></td>
+                  <td class="activity-cell">
+                    <div class="stacked-mini-bar">
+                      @for (seg of getMonthlyAlertBarSegments(stat); track seg.color) {
+                        @if (seg.pct > 0) {
+                          <div [style.background]="seg.color" [style.flex]="seg.pct" [title]="seg.color + ': ' + seg.pct.toFixed(0) + '%'"></div>
+                        }
+                      }
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  }
+
+</div>

@@ -1,0 +1,6 @@
+@CCTV_Guard_HostAddress = http://localhost:5176
+
+GET {{CCTV_Guard_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

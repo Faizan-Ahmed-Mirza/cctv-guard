@@ -1,0 +1,168 @@
+<div class="login-page">
+  <!-- Background grid -->
+  <div class="bg-grid"></div>
+
+  <!-- Left panel -->
+  <div class="login-left">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+          <rect width="32" height="32" rx="8" fill="#3b82f6"/>
+          <path d="M8 12a4 4 0 014-4h8a4 4 0 014 4v2a4 4 0 01-4 4H12a4 4 0 01-4-4v-2z" fill="white" opacity="0.9"/>
+          <circle cx="16" cy="22" r="3" fill="white" opacity="0.7"/>
+          <path d="M13 22h6" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <span class="brand-name">CCTV Guard</span>
+    </div>
+
+    <div class="hero-content">
+      <h1>AI-Powered<br>Smart Surveillance</h1>
+      <p>Real-time threat detection and automated security management for smart cities and enterprise environments.</p>
+
+      <div class="feature-list">
+        <div class="feature-item">
+          <span class="feature-icon">🎯</span>
+          <div>
+            <strong>≥ 95% Detection Accuracy</strong>
+            <span>YOLOv8 powered anomaly detection</span>
+          </div>
+        </div>
+        <div class="feature-item">
+          <span class="feature-icon">⚡</span>
+          <div>
+            <strong>≤ 2s Alert Latency</strong>
+            <span>Instant push notifications via Firebase</span>
+          </div>
+        </div>
+        <div class="feature-item">
+          <span class="feature-icon">🔒</span>
+          <div>
+            <strong>FaceNet Recognition</strong>
+            <span>Identity verification & access control</span>
+          </div>
+        </div>
+        <div class="feature-item">
+          <span class="feature-icon">☁️</span>
+          <div>
+            <strong>99% Uptime</strong>
+            <span>Cloud-based redundant infrastructure</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="login-footer-text">
+      <span>UET Lahore — Department of Computer Science</span>
+    </div>
+  </div>
+
+  <!-- Right panel: Login form -->
+  <div class="login-right">
+    <div class="login-card">
+      <div class="login-header">
+        <h2>Welcome Back</h2>
+        <p>Sign in to access the security dashboard</p>
+      </div>
+
+      <form (ngSubmit)="onSubmit()" #loginForm="ngForm" novalidate>
+        <div class="form-group">
+          <label for="username">Username</label>
+          <div class="input-wrapper">
+            <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <input
+              id="username"
+              type="text"
+              class="form-control"
+              placeholder="Enter your username"
+              [(ngModel)]="username"
+              name="username"
+              autocomplete="username"
+              [disabled]="loading()"
+            />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <div class="input-wrapper">
+            <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0110 0v4"/>
+            </svg>
+            <input
+              id="password"
+              type="password"
+              class="form-control"
+              placeholder="Enter your password"
+              [(ngModel)]="password"
+              name="password"
+              autocomplete="current-password"
+              [disabled]="loading()"
+            />
+          </div>
+        </div>
+
+        <div class="form-options">
+          <label class="checkbox-label">
+            <input type="checkbox" name="remember"> Remember me
+          </label>
+          <a href="#" class="forgot-link" (click)="$event.preventDefault()">Forgot password?</a>
+        </div>
+
+        @if (error()) {
+          <div class="error-message" role="alert">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            {{ error() }}
+          </div>
+        }
+
+        <button type="submit" class="btn btn-primary btn-login" [disabled]="loading()">
+          @if (loading()) {
+            <span class="spinner"></span>
+            Authenticating...
+          } @else {
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/>
+              <polyline points="10 17 15 12 10 7"/>
+              <line x1="15" y1="12" x2="3" y2="12"/>
+            </svg>
+            Sign In
+          }
+        </button>
+      </form>
+
+      <div class="demo-credentials">
+        <p class="demo-title">Demo Credentials</p>
+        <div class="demo-grid">
+          <div class="demo-item">
+            <span class="badge badge-danger">Admin</span>
+            <code>admin / password123</code>
+          </div>
+          <div class="demo-item">
+            <span class="badge badge-info">Operator</span>
+            <code>operator / password123</code>
+          </div>
+          <div class="demo-item">
+            <span class="badge badge-secondary">Viewer</span>
+            <code>viewer / password123</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="security-note">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        Secured with SSL/TLS encryption
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,82 @@
+<aside
+  class="sidebar"
+  [class.collapsed]="collapsed"
+  [class.mobile]="isMobile"
+  [class.mobile-open]="mobileOpen"
+>
+  <!-- Brand -->
+  <div class="sidebar-brand">
+    <div class="brand-icon">
+      <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
+        <rect width="32" height="32" rx="8" fill="#3b82f6"/>
+        <path d="M8 12a4 4 0 014-4h8a4 4 0 014 4v2a4 4 0 01-4 4H12a4 4 0 01-4-4v-2z" fill="white" opacity="0.9"/>
+        <circle cx="16" cy="22" r="3" fill="white" opacity="0.7"/>
+      </svg>
+    </div>
+    @if (!collapsed) {
+      <div class="brand-text">
+        <span class="brand-name">CCTV Guard</span>
+        <span class="brand-sub">AI Surveillance</span>
+      </div>
+    }
+  </div>
+
+  <!-- System status -->
+  @if (!collapsed) {
+    <div class="system-status">
+      <span class="live-dot"></span>
+      <span class="status-text">System Online</span>
+    </div>
+  }
+
+  <!-- Navigation -->
+  <nav class="sidebar-nav">
+    @if (!collapsed) {
+      <p class="nav-section-label">Navigation</p>
+    }
+
+    @for (item of navItems; track item.key) {
+      <a
+        [routerLink]="item.path"
+        routerLinkActive="active"
+        class="nav-item"
+        [title]="collapsed ? item.label : ''"
+        (click)="onNavClick()"
+      >
+        <span class="nav-icon">{{ item.icon }}</span>
+        @if (!collapsed) {
+          <span class="nav-label">{{ item.label }}</span>
+          @if (item.key === 'alerts' && unreadAlerts() > 0) {
+            <span class="nav-badge">{{ unreadAlerts() }}</span>
+          }
+        } @else {
+          @if (item.key === 'alerts' && unreadAlerts() > 0) {
+            <span class="nav-badge-dot"></span>
+          }
+        }
+      </a>
+    }
+  </nav>
+
+  <!-- User footer -->
+  <div class="sidebar-footer">
+    @if (!collapsed) {
+      <div class="user-info">
+        <div class="user-avatar">
+          {{ auth.currentUser()?.username?.charAt(0)?.toUpperCase() }}
+        </div>
+        <div class="user-details">
+          <span class="user-name">{{ auth.currentUser()?.username }}</span>
+          <span class="user-role badge badge-info">{{ auth.currentUser()?.role }}</span>
+        </div>
+      </div>
+    }
+    <button class="btn btn-ghost btn-icon logout-btn" (click)="auth.logout()" title="Logout">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+        <polyline points="16 17 21 12 16 7"/>
+        <line x1="21" y1="12" x2="9" y2="12"/>
+      </svg>
+    </button>
+  </div>
+</aside>

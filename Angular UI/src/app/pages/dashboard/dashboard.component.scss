@@ -1,0 +1,338 @@
+.dashboard { animation: fadeIn 0.2s ease; }
+
+.stat-total { font-size: 15px; color: var(--text-muted); font-weight: 400; }
+
+.stats-grid {
+  grid-template-columns: repeat(5, 1fr);
+  @media (max-width: 1200px) { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 768px)  { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 400px)  { grid-template-columns: 1fr; }
+}
+
+.header-actions { display: flex; align-items: center; gap: 12px; }
+
+.grid-toggle {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+
+  .btn { border: none; border-radius: 4px; padding: 6px 8px; }
+  .btn.active { background: var(--accent-blue); color: white; }
+
+  /* Hide 3-col option on small screens — too cramped */
+  @media (max-width: 640px) {
+    .btn:nth-child(2) { display: none; }
+  }
+}
+
+.monitor-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 20px;
+  align-items: start;   /* cameras column stays top-aligned, doesn't stretch */
+
+  @media (max-width: 1100px) { grid-template-columns: 1fr; }
+}
+
+/* Wrapper that makes the sidebar column stretch to the camera column's height */
+.incidents-sidebar-wrapper {
+  display: flex;
+  flex-direction: column;
+  /* align-self: stretch makes this grid cell fill the row height */
+  align-self: stretch;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+
+  h2 { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+}
+
+.live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-red);
+  letter-spacing: 1px;
+
+  .live-dot { background: var(--accent-red); animation: pulse 1s infinite; }
+}
+
+/* ── Camera grid ── */
+.camera-grid {
+  display: grid;
+  gap: 12px;
+
+  &.grid-2x2 { grid-template-columns: repeat(2, 1fr); }
+  &.grid-3x2 { grid-template-columns: repeat(3, 1fr); }
+  &.grid-1x1 { grid-template-columns: 1fr; }
+
+  /* Force single column on phones */
+  @media (max-width: 540px) {
+    &.grid-2x2,
+    &.grid-3x2 { grid-template-columns: 1fr; }
+  }
+}
+
+.camera-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+
+  &:hover { border-color: var(--accent-blue); transform: translateY(-2px); box-shadow: var(--shadow-glow); }
+  &.offline { opacity: 0.7; }
+}
+
+.camera-feed {
+  position: relative;
+  aspect-ratio: 16/9;
+  background: #050810;
+  overflow: hidden;
+}
+
+.feed-placeholder {
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(ellipse at center, #0d1b2a 0%, #050810 100%);
+  position: relative;
+  overflow: hidden;
+
+  &.large { height: 260px; }
+}
+
+.feed-scanline {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 255, 100, 0.015) 2px,
+    rgba(0, 255, 100, 0.015) 4px
+  );
+  pointer-events: none;
+}
+
+.feed-noise {
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.feed-overlay { position: absolute; inset: 0; }
+
+.feed-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-color: rgba(59, 130, 246, 0.6);
+  border-style: solid;
+
+  &.tl { top: 8px; left: 8px; border-width: 2px 0 0 2px; }
+  &.tr { top: 8px; right: 8px; border-width: 2px 2px 0 0; }
+  &.bl { bottom: 8px; left: 8px; border-width: 0 0 2px 2px; }
+  &.br { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+}
+
+.detection-box {
+  position: absolute;
+  border: 2px solid var(--accent-red);
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+  animation: blink 3s infinite;
+
+  .detection-label {
+    position: absolute;
+    top: -20px;
+    left: 0;
+    background: var(--accent-red);
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+}
+
+.feed-offline {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  background: #050810;
+
+  &.large { height: 260px; }
+  span { font-size: 14px; }
+}
+
+.camera-overlay-top {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cam-id {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.6);
+  background: rgba(0,0,0,0.5);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+.ai-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(59, 130, 246, 0.8);
+  color: white;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+}
+
+.camera-info {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-color);
+
+  .cam-name     { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .cam-location { font-size: 12px; color: var(--text-secondary); margin-top: 3px; } /* was text-muted */
+}
+
+/* ── Incidents sidebar ── */
+.incidents-sidebar {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 16px;
+
+  /* Fill the full height of the wrapper, then scroll internally */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;          /* required for flex children to shrink below content size */
+}
+
+.incident-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;       /* scroll only the list, not the header */
+  flex: 1;
+  min-height: 0;
+  padding-right: 2px;     /* tiny gap so scrollbar doesn't clip items */
+}
+
+.incident-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  border-left: 3px solid transparent;
+
+  &:hover { background: var(--bg-card-hover); }
+  &.severity-critical { border-left-color: var(--accent-red); }
+  &.severity-high     { border-left-color: var(--accent-orange); }
+  &.severity-medium   { border-left-color: var(--accent-yellow); }
+  &.severity-low      { border-left-color: var(--accent-blue); }
+}
+
+.incident-icon { font-size: 18px; flex-shrink: 0; margin-top: 2px; }
+
+.incident-details {
+  flex: 1;
+  min-width: 0;
+
+  .incident-type   { font-size: 14px; font-weight: 600; color: var(--text-primary); text-transform: capitalize; }
+  .incident-camera { font-size: 12px; color: var(--text-secondary); margin-top: 2px; } /* was text-muted */
+  .incident-meta   { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .confidence      { font-size: 12px; color: var(--accent-green); font-weight: 600; }
+  .time            { font-size: 12px; color: var(--text-muted); }
+}
+
+.incident-status { flex-shrink: 0; }
+
+/* ── Modal ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: fadeIn 0.15s ease;
+}
+
+.modal-content {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 700px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px;
+  border-bottom: 1px solid var(--border-color);
+
+  h3 { font-size: 17px; font-weight: 700; color: var(--text-primary); }
+  p  { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+}
+
+.modal-feed { background: #050810; }
+
+.modal-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border-color);
+  border-top: 1px solid var(--border-color);
+
+  @media (max-width: 480px) { grid-template-columns: repeat(2, 1fr); }
+
+  .modal-stat {
+    background: var(--bg-card);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    .label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .value { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  }
+}

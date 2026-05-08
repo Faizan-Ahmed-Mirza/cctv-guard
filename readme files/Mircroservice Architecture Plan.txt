@@ -1,0 +1,47 @@
+# AI-Powered CCTV Guard: Technical Implementation Plan
+
+This document outlines the architecture and deployment strategy for the **AI-Powered CCTV Guard**, a smart surveillance system designed for real-time threat detection and automated security management[cite: 1].
+
+## 1. System Architecture Overview
+The system utilizes a decoupled, multi-tier architecture to balance high-quality video streaming with low-latency AI processing[cite: 1].
+
+*   **Frontend**: Angular dashboard for real-time monitoring and incident visualization[cite: 1].
+*   **Backend (Orchestrator)**: .NET Web API for stream proxying, database management, and SignalR communication[cite: 1].
+*   **AI Microserver (Worker)**: Python FastAPI server hosting YOLOv8 and FaceNet models[cite: 1].
+*   **Database**: SQL Server for logging incident metadata and security logs[cite: 1].
+
+## 2. Technical Execution Plan
+
+### Phase 1: High-Quality Video Pipeline (.NET & Angular)
+The .NET application acts as the high-speed bridge between the IP cameras and the user[cite: 1].
+*   **.NET Stream Proxy**: Use **LibVLCSharp** or **FFmpeg.NET** to connect to the camera's RTSP feed[cite: 1].
+*   **Live Rendering**: Stream the feed directly to the Angular UI using **WebRTC** or **HLS** to maintain original quality and FPS[cite: 1].
+*   **UI Integration**: Render the high-resolution video in the dashboard using `video.js` or a native HTML5 video element[cite: 1].
+
+### Phase 2: AI Ingestion & Downsampling
+To achieve the target latency of $\le 15 \text{ ms}$ per frame, the .NET app generates a "diet" stream for the AI[cite: 1].
+*   **Frame Extraction**: The .NET app captures frames at a rate of 1–4 FPS from the high-quality stream[cite: 1].
+*   **Preprocessing**: Frames are resized to $640 \times 640$ and compressed as JPEGs to minimize payload size[cite: 1].
+*   **Transmission**: Compressed frames are pushed to the Python Microserver via local POST requests[cite: 1].
+
+### Phase 3: AI Inference (Python Microserver)
+The Python server performs specialized computer vision tasks[cite: 1].
+*   **YOLOv8**: Detects weapons (guns), physical combat (fights), and fire anomalies[cite: 1].
+*   **FaceNet**: Triggered upon "Person" detection to verify identity against the FaceNet database[cite: 1].
+*   **Response**: Returns JSON coordinates ($x, y, w, h$) and labels back to the .NET orchestrator[cite: 1].
+
+### Phase 4: Real-Time Bounding Box Overlay
+*   **SignalR Communication**: The .NET app receives AI results and broadcasts them to Angular via **SignalR**[cite: 1].
+*   **Canvas Overlay**: Angular renders a transparent HTML5 Canvas or SVG layer on top of the video player[cite: 1].
+*   **Animation**: Uses CSS transitions to animate bounding boxes smoothly between coordinates, ensuring they track moving targets even at lower AI sampling rates[cite: 1].
+
+## 3. Security & Alerting Workflow
+*   **Incident Logging**: All detections are saved to **SQL Server** with timestamps and confidence scores[cite: 1].
+*   **Automated Alerts**: Real-time push notifications are dispatched via **Firebase Cloud Messaging (FCM)** for high-priority threats (e.g., Gun, Fight)[cite: 1].
+*   **Access Control**: Role-based access control (Admin, Operator, Viewer) is enforced at the .NET layer[cite: 1].
+
+## 4. Hardware Simulation (Development Stage)
+*   **Camera Mocking**: Use **DroidCam**, **IP Webcam (Android)**, or local `.mp4` files to simulate RTSP feeds[cite: 1].
+*   **Processing**: Leverage local GPU instances (NVIDIA) for model inference to meet the required performance benchmarks[cite: 1].
+
+---

@@ -1,0 +1,22 @@
+<div class="app-layout" [class.sidebar-collapsed]="sidebarCollapsed()">
+
+  <!-- Mobile backdrop -->
+  @if (isMobile() && mobileOpen()) {
+    <div class="mobile-backdrop" (click)="closeMobile()"></div>
+  }
+
+  <app-sidebar
+    [collapsed]="!isMobile() && sidebarCollapsed()"
+    [mobileOpen]="isMobile() && mobileOpen()"
+    [isMobile]="isMobile()"
+    (linkClicked)="closeMobile()"
+  />
+
+  <div class="main-area">
+    <app-header (toggleSidebar)="toggleSidebar()" />
+    <main class="page-content">
+      <router-outlet />
+    </main>
+  </div>
+
+</div>

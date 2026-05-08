@@ -1,0 +1,145 @@
+<div class="alerts-page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">
+        Alert Notification Center
+        @if (unreadCount() > 0) {
+          <span class="unread-badge">{{ unreadCount() }} new</span>
+        }
+      </h1>
+      <p class="page-subtitle">Real-time push notifications and threat alert management</p>
+    </div>
+    <div class="header-actions">
+      @if (unreadCount() > 0) {
+        <button class="btn btn-ghost btn-sm" (click)="markAllRead()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          Mark all read
+        </button>
+      }
+    </div>
+  </div>
+
+  <!-- Severity filter tabs -->
+  <div class="severity-tabs">
+    <button class="tab-btn" [class.active]="filterSeverity() === 'all'" (click)="filterSeverity.set('all')">
+      All <span class="tab-count">{{ activeAlerts().length }}</span>
+    </button>
+    <button class="tab-btn critical" [class.active]="filterSeverity() === 'critical'" (click)="filterSeverity.set('critical')">
+      🔴 Critical
+    </button>
+    <button class="tab-btn high" [class.active]="filterSeverity() === 'high'" (click)="filterSeverity.set('high')">
+      🟠 High
+    </button>
+    <button class="tab-btn medium" [class.active]="filterSeverity() === 'medium'" (click)="filterSeverity.set('medium')">
+      🟡 Medium
+    </button>
+    <button class="tab-btn low" [class.active]="filterSeverity() === 'low'" (click)="filterSeverity.set('low')">
+      🔵 Low
+    </button>
+  </div>
+
+  <!-- Active alerts -->
+  <div class="alerts-section">
+    @if (activeAlerts().length === 0) {
+      <div class="empty-alerts">
+        <span>✅</span>
+        <h3>No Active Alerts</h3>
+        <p>All clear — no threats detected matching your filter.</p>
+      </div>
+    }
+
+    @for (alert of activeAlerts(); track alert.id) {
+      <div
+        class="alert-card"
+        [class.unread]="!alert.read"
+        [class]="'alert-card severity-' + alert.severity"
+        (click)="markRead(alert.id)"
+      >
+        <div class="alert-severity-bar"></div>
+
+        <div class="alert-icon">
+          {{ getSeverityIcon(alert.severity) }}
+        </div>
+
+        <div class="alert-content">
+          <div class="alert-header-row">
+            <div class="alert-type-row">
+              <span class="alert-type">{{ alert.type }}</span>
+              @if (!alert.read) {
+                <span class="new-dot"></span>
+              }
+            </div>
+            <span class="alert-time">{{ formatTime(alert.timestamp) }}</span>
+          </div>
+
+          <p class="alert-message">{{ alert.message }}</p>
+
+          <div class="alert-meta">
+            <span class="alert-camera">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 7l-7 5 7 5V7z"/>
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+              </svg>
+              {{ alert.cameraName }}
+            </span>
+            <span class="badge badge-{{ getSeverityClass(alert.severity) }}">{{ alert.severity }}</span>
+          </div>
+        </div>
+
+        <div class="alert-actions">
+          @if (auth.canEdit()) {
+            <button class="btn btn-danger btn-sm" title="Contact Emergency Services">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.67A2 2 0 012 .84h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 8.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
+              </svg>
+              Emergency
+            </button>
+            <button class="btn btn-ghost btn-sm" (click)="dismiss(alert.id); $event.stopPropagation()" title="Dismiss">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+              Dismiss
+            </button>
+          }
+        </div>
+      </div>
+    }
+  </div>
+
+  <!-- Dismissed alerts toggle -->
+  @if (dismissedAlerts().length > 0) {
+    <div class="dismissed-section">
+      <button class="dismissed-toggle" (click)="toggleDismissed()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          [style.transform]="showDismissed() ? 'rotate(180deg)' : 'rotate(0)'">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+        {{ showDismissed() ? 'Hide' : 'Show' }} dismissed alerts ({{ dismissedAlerts().length }})
+      </button>
+
+      @if (showDismissed()) {
+        <div class="dismissed-list">
+          @for (alert of dismissedAlerts(); track alert.id) {
+            <div class="alert-card dismissed">
+              <div class="alert-icon">{{ getSeverityIcon(alert.severity) }}</div>
+              <div class="alert-content">
+                <div class="alert-header-row">
+                  <span class="alert-type">{{ alert.type }}</span>
+                  <span class="alert-time">{{ formatTime(alert.timestamp) }}</span>
+                </div>
+                <p class="alert-message">{{ alert.message }}</p>
+                <div class="alert-meta">
+                  <span class="alert-camera">{{ alert.cameraName }}</span>
+                  <span class="badge badge-secondary">dismissed</span>
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  }
+</div>

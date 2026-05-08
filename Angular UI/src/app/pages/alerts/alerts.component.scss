@@ -1,0 +1,197 @@
+.alerts-page { animation: fadeIn 0.2s ease; }
+
+.unread-badge {
+  display: inline-flex;
+  align-items: center;
+  background: var(--accent-red);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 10px;
+  vertical-align: middle;
+  animation: blink 2s infinite;
+}
+
+.header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+.severity-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition);
+
+  &:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+  &.active { background: var(--accent-blue); color: white; border-color: var(--accent-blue); }
+
+  .tab-count {
+    background: rgba(255,255,255,0.2);
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-size: 12px;
+  }
+}
+
+.alerts-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.empty-alerts {
+  text-align: center;
+  padding: 60px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+
+  span { font-size: 48px; display: block; margin-bottom: 12px; }
+  h3   { font-size: 18px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+  p    { font-size: 15px; color: var(--text-muted); }
+}
+
+.alert-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+  overflow: hidden;
+  animation: slideIn 0.3s ease;
+
+  &:hover { border-color: var(--border-light); transform: translateX(2px); }
+
+  &.unread {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+  }
+
+  &.severity-critical .alert-severity-bar { background: var(--accent-red); }
+  &.severity-high     .alert-severity-bar { background: var(--accent-orange); }
+  &.severity-medium   .alert-severity-bar { background: var(--accent-yellow); }
+  &.severity-low      .alert-severity-bar { background: var(--accent-blue); }
+
+  &.dismissed {
+    opacity: 0.5;
+    cursor: default;
+    &:hover { transform: none; }
+  }
+
+  @media (max-width: 540px) {
+    flex-wrap: wrap;
+    .alert-actions { flex-direction: row; width: 100%; justify-content: flex-end; }
+  }
+}
+
+.alert-severity-bar {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+}
+
+.alert-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.alert-content { flex: 1; min-width: 0; }
+
+.alert-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.alert-type-row { display: flex; align-items: center; gap: 8px; }
+
+.alert-type {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.new-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  animation: pulse 2s infinite;
+}
+
+.alert-time {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.alert-message {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+
+.alert-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.alert-camera {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.alert-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+
+/* ── Dismissed section ── */
+.dismissed-section { margin-top: 8px; }
+
+.dismissed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 8px 0;
+  transition: var(--transition);
+
+  svg { transition: transform 0.2s ease; }
+  &:hover { color: var(--text-secondary); }
+}
+
+.dismissed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}

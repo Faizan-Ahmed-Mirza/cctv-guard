@@ -1,0 +1,31 @@
+# ── Angular ───────────────────────────────────────────────────────────────────
+Angular UI/node_modules/
+Angular UI/dist/
+Angular UI/.angular/
+
+# ── .NET ──────────────────────────────────────────────────────────────────────
+DotNet Backend/**/bin/
+DotNet Backend/**/obj/
+DotNet Backend/**/*.user
+DotNet Backend/**/*.suo
+DotNet Backend/**/.vs/
+DotNet Backend/**/appsettings.Development.json
+
+# ── FFmpeg binaries (auto-downloaded, don't commit ~70 MB) ───────────────────
+DotNet Backend/CCTV-Guard/ffmpeg-bin/
+DotNet Backend/CCTV-Guard/hls-output/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+ai-service/venv/
+ai-service/__pycache__/
+ai-service/*.pyc
+
+# ── OS / IDE ──────────────────────────────────────────────────────────────────
+.vs/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ── Test/debug files ──────────────────────────────────────────────────────────
+stream-test.html
+DotNet Backend/CCTV-Guard/ffmpeg_test.txt

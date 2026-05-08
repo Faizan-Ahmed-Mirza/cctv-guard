@@ -1,0 +1,1062 @@
+<div class="config-page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Configuration</h1>
+      <p class="page-subtitle">Manage cameras, AI models, users, and system settings</p>
+    </div>
+  </div>
+
+  <!-- Success toast -->
+  @if (saveSuccess()) {
+    <div class="success-toast">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
+        <polyline points="22 4 12 14.01 9 11.01"/>
+      </svg>
+      {{ saveSuccess() }}
+    </div>
+  }
+
+  <!-- Error toast -->
+  @if (saveError()) {
+    <div class="error-toast">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      {{ saveError() }}
+    </div>
+  }
+
+  <!-- Tabs -->
+  <div class="config-tabs">
+    <button class="tab-btn" [class.active]="activeTab() === 'cameras'" (click)="activeTab.set('cameras')">
+      📹 Cameras
+    </button>
+    @if (auth.isAdmin()) {
+      <button class="tab-btn" [class.active]="activeTab() === 'ai'" (click)="activeTab.set('ai')">
+        🤖 AI &amp; Detection
+      </button>
+      <button class="tab-btn" [class.active]="activeTab() === 'users'" (click)="activeTab.set('users')">
+        👥 Users &amp; Access
+      </button>
+      <button class="tab-btn" [class.active]="activeTab() === 'system'" (click)="activeTab.set('system')">
+        ⚙️ System
+      </button>
+    }
+  </div>
+
+  <!-- ══ CAMERAS TAB ══ -->
+  @if (activeTab() === 'cameras') {
+    <div class="tab-content">
+
+      @if (auth.isOperator()) {
+        <div class="role-scope-banner">
+          <span>🛡️</span>
+          <div>
+            <strong>Operator Access</strong>
+            <p>You can enable or disable AI detection on cameras. Adding, editing, or deleting cameras requires Admin access.</p>
+          </div>
+        </div>
+      }
+
+      <div class="section-header-row">
+        <h2>IP Camera Management</h2>
+        @if (auth.isAdmin()) {
+          <button class="btn btn-primary btn-sm" (click)="openAddModal()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Add Camera
+          </button>
+        }
+      </div>
+
+      <!-- Camera list -->
+      <div class="camera-list">
+        @for (cam of cameras(); track cam.id) {
+          <div class="camera-row card">
+            <div class="cam-status-indicator" [class]="cam.status"></div>
+
+            <div class="cam-info">
+              <div class="cam-name-row">
+                <span class="cam-name">{{ cam.name }}</span>
+                <span class="badge badge-{{ getStatusClass(cam.status) }}">{{ cam.status }}</span>
+              </div>
+              <div class="cam-details">
+                <span>📍 {{ cam.location }}</span>
+                <span>🌐 {{ cam.ipAddress }}:{{ cam.port }}</span>
+                <span>🎬 {{ cam.frameRate }} fps</span>
+                @if (cam.rtspUrl) {
+                  <span class="protocol-badge" [class.rtmp]="cam.rtspUrl.startsWith('rtmp')">
+                    {{ cam.rtspUrl.startsWith('rtmp') ? 'RTMP' : 'RTSP' }}
+                  </span>
+                }
+              </div>
+            </div>
+
+            <div class="cam-ai-settings">
+              <div class="ai-toggle">
+                <span class="ai-label">AI Detection</span>
+                <label class="switch" [class.disabled]="!auth.canEdit()">
+                  <input
+                    type="checkbox"
+                    [checked]="cam.detectionEnabled"
+                    (change)="toggleDetection(cam.id, $any($event.target).checked)"
+                    [disabled]="!auth.canEdit()"
+                  />
+                  <span class="slider"></span>
+                </label>
+              </div>
+              <div class="confidence-display">
+                <span class="conf-label">Confidence</span>
+                <span class="conf-value">{{ (cam.confidenceThreshold * 100).toFixed(0) }}%</span>
+              </div>
+            </div>
+
+            @if (auth.isAdmin()) {
+              <div class="cam-actions">
+                <button class="btn btn-ghost btn-sm" (click)="openEditModal(cam)" title="Edit camera">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </button>
+                <button class="btn btn-ghost btn-sm" (click)="deleteCamera(cam.id)" title="Delete camera" style="color: var(--accent-red)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+                  </svg>
+                </button>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- ══ AI TAB ══ -->
+  @if (activeTab() === 'ai') {
+    <div class="tab-content">
+      <div class="section-header-row">
+        <h2>AI Detection Settings</h2>
+        <div class="model-badge">
+          <span>🤖</span>
+          <span>{{ aiSettings().modelVersion }}</span>
+          <span class="badge badge-success">Active</span>
+        </div>
+      </div>
+
+      <div class="ai-settings-grid">
+        <!-- Detection modules -->
+        <div class="card">
+          <h3 class="card-title">Detection Modules</h3>
+          <div class="module-list">
+            <div class="module-item">
+              <div class="module-info">
+                <span class="module-icon">🥊</span>
+                <div>
+                  <span class="module-name">Fight Detection</span>
+                  <span class="module-desc">Physical altercation detection via YOLOv8</span>
+                </div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" [checked]="aiSettings().fightDetection"
+                  (change)="toggleModule('fightDetection', $any($event.target).checked)" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="module-item">
+              <div class="module-info">
+                <span class="module-icon">🔫</span>
+                <div>
+                  <span class="module-name">Weapon Detection</span>
+                  <span class="module-desc">Firearm and weapon brandishing detection</span>
+                </div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" [checked]="aiSettings().weaponDetection"
+                  (change)="toggleModule('weaponDetection', $any($event.target).checked)" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="module-item">
+              <div class="module-info">
+                <span class="module-icon">🚨</span>
+                <div>
+                  <span class="module-name">Intrusion Detection</span>
+                  <span class="module-desc">Unauthorized zone access detection</span>
+                </div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" [checked]="aiSettings().intrusionDetection"
+                  (change)="toggleModule('intrusionDetection', $any($event.target).checked)" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="module-item">
+              <div class="module-info">
+                <span class="module-icon">👤</span>
+                <div>
+                  <span class="module-name">Face Recognition</span>
+                  <span class="module-desc">FaceNet identity verification</span>
+                </div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" [checked]="aiSettings().faceRecognition"
+                  (change)="toggleModule('faceRecognition', $any($event.target).checked)" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="module-item">
+              <div class="module-info">
+                <span class="module-icon">🚗</span>
+                <div>
+                  <span class="module-name">License Plate OCR</span>
+                  <span class="module-desc">Vehicle license plate recognition</span>
+                </div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" [checked]="aiSettings().licensePlate"
+                  (change)="toggleModule('licensePlate', $any($event.target).checked)" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Performance settings -->
+        <div class="card">
+          <h3 class="card-title">Performance Parameters</h3>
+          <div class="perf-settings">
+            <div class="form-group">
+              <label>Global Confidence Threshold (0.0–1.0)</label>
+              <input type="number" class="form-control" [(ngModel)]="aiSettings().globalConfidence" min="0" max="1" step="0.05" />
+              <span class="field-hint">Minimum confidence score to trigger an alert</span>
+            </div>
+            <div class="form-group">
+              <label>Alert Latency Target (seconds)</label>
+              <input type="number" class="form-control" [(ngModel)]="aiSettings().alertLatencyTarget" min="1" max="10" />
+              <span class="field-hint">Target: ≤ 2 seconds per SRS specification</span>
+            </div>
+            <div class="form-group">
+              <label>Frame Processing Rate (fps)</label>
+              <input type="number" class="form-control" [(ngModel)]="aiSettings().frameProcessingRate" min="1" max="60" />
+              <span class="field-hint">Target: &lt; 15ms/frame processing latency</span>
+            </div>
+            <div class="form-group">
+              <label>Model Version</label>
+              <select class="form-control" [(ngModel)]="aiSettings().modelVersion">
+                <option value="YOLOv8n">YOLOv8n (Nano — fastest)</option>
+                <option value="YOLOv8s">YOLOv8s (Small)</option>
+                <option value="YOLOv8m">YOLOv8m (Medium)</option>
+                <option value="YOLOv8l">YOLOv8l (Large — most accurate)</option>
+              </select>
+            </div>
+            <div class="toggle-row">
+              <label class="toggle-label">
+                <input type="checkbox" [(ngModel)]="aiSettings().gpuAcceleration" />
+                <span class="toggle-text">GPU Acceleration (AWS/GCP)</span>
+              </label>
+            </div>
+          </div>
+          @if (auth.canEdit()) {
+            <button class="btn btn-primary" (click)="saveAiSettings()">Save AI Settings</button>
+          }
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ══ USERS TAB ══ -->
+  @if (activeTab() === 'users') {
+    <div class="tab-content">
+
+      <!-- Admin-only guard banner -->
+      @if (!auth.hasRole('Admin')) {
+        <div class="access-denied-banner">
+          <span>🔒</span>
+          <div>
+            <strong>Admin Access Required</strong>
+            <p>Only Administrators can manage users and access control.</p>
+          </div>
+        </div>
+      }
+
+      @if (auth.hasRole('Admin')) {
+
+        <!-- User stats row -->
+        <div class="user-stats-row">
+          <div class="user-stat-chip">
+            <span class="ust-value">{{ userStats().total }}</span>
+            <span class="ust-label">Total Users</span>
+          </div>
+          <div class="user-stat-chip chip-danger">
+            <span class="ust-value">{{ userStats().admins }}</span>
+            <span class="ust-label">Admins</span>
+          </div>
+          <div class="user-stat-chip chip-warning">
+            <span class="ust-value">{{ userStats().operators }}</span>
+            <span class="ust-label">Operators</span>
+          </div>
+          <div class="user-stat-chip chip-info">
+            <span class="ust-value">{{ userStats().viewers }}</span>
+            <span class="ust-label">Viewers</span>
+          </div>
+          <div class="user-stat-chip chip-success">
+            <span class="ust-value">{{ userStats().active }}</span>
+            <span class="ust-label">Active</span>
+          </div>
+          <div class="user-stat-chip chip-muted">
+            <span class="ust-value">{{ userStats().suspended }}</span>
+            <span class="ust-label">Suspended</span>
+          </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="users-toolbar">
+          <div class="toolbar-left">
+            <!-- Search -->
+            <div class="search-wrap">
+              <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input
+                type="text"
+                class="form-control search-input"
+                placeholder="Search by username or email…"
+                [ngModel]="userSearch()"
+                (ngModelChange)="userSearch.set($event)"
+              />
+            </div>
+            <!-- Role filter chips -->
+            <div class="role-filter-chips">
+              <button class="role-chip" [class.active]="userFilter() === 'all'"      (click)="userFilter.set('all')">All</button>
+              <button class="role-chip chip-danger"  [class.active]="userFilter() === 'Admin'"    (click)="userFilter.set('Admin')">👑 Admin</button>
+              <button class="role-chip chip-warning" [class.active]="userFilter() === 'Operator'" (click)="userFilter.set('Operator')">🛡️ Operator</button>
+              <button class="role-chip chip-info"    [class.active]="userFilter() === 'Viewer'"   (click)="userFilter.set('Viewer')">👁️ Viewer</button>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" (click)="openAddUserModal()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+            </svg>
+            Add User
+          </button>
+        </div>
+
+        <!-- Users table -->
+        <div class="card users-card">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Last Login</th>
+                  <th>Created</th>
+                  <th>Quick Role</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (user of filteredUsers(); track user.id) {
+                  <tr [class.suspended-row]="user.status === 'suspended'">
+                    <!-- User info -->
+                    <td>
+                      <div class="user-cell">
+                        <div class="user-avatar-cell" [class]="'role-' + user.role.toLowerCase()">
+                          {{ user.username.charAt(0).toUpperCase() }}
+                        </div>
+                        <div class="user-cell-info">
+                          <span class="user-cell-name">{{ user.username }}</span>
+                          <span class="user-cell-email">{{ user.email }}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <!-- Role badge -->
+                    <td>
+                      <span class="badge badge-{{ getRoleClass(user.role) }}">
+                        {{ getRoleIcon(user.role) }} {{ user.role }}
+                      </span>
+                    </td>
+                    <!-- Status -->
+                    <td>
+                      <button
+                        class="status-toggle-btn"
+                        [class.active]="user.status === 'active'"
+                        [class.suspended]="user.status === 'suspended'"
+                        (click)="toggleUserStatus(user)"
+                        [title]="user.status === 'active' ? 'Click to suspend' : 'Click to activate'"
+                      >
+                        <span class="status-dot"></span>
+                        {{ user.status | titlecase }}
+                      </button>
+                    </td>
+                    <!-- Last login -->
+                    <td class="muted-cell">{{ formatDate(user.lastLogin) }}</td>
+                    <!-- Created -->
+                    <td class="muted-cell">{{ user.createdAt | date:'MMM d, y' }}</td>
+                    <!-- Quick role change -->
+                    <td>
+                      <select
+                        class="form-control role-select"
+                        [ngModel]="user.role"
+                        (ngModelChange)="changeUserRole(user, $event)"
+                        [disabled]="user.role === 'Admin' && userStats().admins <= 1"
+                      >
+                        <option value="Admin">👑 Admin</option>
+                        <option value="Operator">🛡️ Operator</option>
+                        <option value="Viewer">👁️ Viewer</option>
+                      </select>
+                    </td>
+                    <!-- Actions -->
+                    <td>
+                      <div class="action-btns">
+                        <button class="btn btn-ghost btn-sm" (click)="openEditUserModal(user)" title="Edit user">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                          </svg>
+                        </button>
+                        <button
+                          class="btn btn-ghost btn-sm btn-delete"
+                          (click)="confirmDeleteUser(user.id)"
+                          title="Delete user"
+                          [disabled]="user.role === 'Admin' && userStats().admins <= 1"
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                            <path d="M10 11v6M14 11v6"/>
+                            <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                }
+                @empty {
+                  <tr>
+                    <td colspan="7" class="empty-row">
+                      <div class="empty-state">
+                        <span>👥</span>
+                        <p>No users match your filter.</p>
+                      </div>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Role permissions reference -->
+        <div class="roles-reference">
+          <h3 class="section-title" style="margin-bottom:14px">Role Permissions Reference</h3>
+          <div class="roles-grid">
+            <div class="role-card card">
+              <div class="role-header">
+                <span class="role-icon">👑</span>
+                <div>
+                  <h3>Admin</h3>
+                  <span class="badge badge-danger">Full Access</span>
+                </div>
+              </div>
+              <ul class="permission-list">
+                <li>✅ View all camera feeds</li>
+                <li>✅ Manage cameras &amp; AI settings</li>
+                <li>✅ Manage users &amp; roles</li>
+                <li>✅ Acknowledge &amp; resolve incidents</li>
+                <li>✅ Access system configuration</li>
+                <li>✅ Export incident logs</li>
+              </ul>
+            </div>
+            <div class="role-card card">
+              <div class="role-header">
+                <span class="role-icon">🛡️</span>
+                <div>
+                  <h3>Operator</h3>
+                  <span class="badge badge-warning">Operational Access</span>
+                </div>
+              </div>
+              <ul class="permission-list">
+                <li>✅ View all camera feeds</li>
+                <li>✅ Acknowledge &amp; resolve incidents</li>
+                <li>✅ Manage camera detection settings</li>
+                <li>✅ View &amp; dismiss alerts</li>
+                <li>❌ Manage users</li>
+                <li>❌ System configuration</li>
+              </ul>
+            </div>
+            <div class="role-card card">
+              <div class="role-header">
+                <span class="role-icon">👁️</span>
+                <div>
+                  <h3>Viewer</h3>
+                  <span class="badge badge-info">Read Only</span>
+                </div>
+              </div>
+              <ul class="permission-list">
+                <li>✅ View camera feeds</li>
+                <li>✅ View incident logs</li>
+                <li>✅ View alerts</li>
+                <li>❌ Modify any settings</li>
+                <li>❌ Acknowledge incidents</li>
+                <li>❌ Access configuration</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Security policies -->
+        <div class="card" style="margin-top: 20px">
+          <h3 class="card-title">Security Policies</h3>
+          <div class="policy-list">
+            <div class="policy-item">
+              <span class="policy-icon">🔐</span>
+              <div>
+                <strong>Password Requirements</strong>
+                <p>Minimum 8 characters, alphanumeric mix required</p>
+              </div>
+              <span class="badge badge-success">Enforced</span>
+            </div>
+            <div class="policy-item">
+              <span class="policy-icon">🔒</span>
+              <div>
+                <strong>SSL/TLS Encryption</strong>
+                <p>All communications encrypted in transit</p>
+              </div>
+              <span class="badge badge-success">Active</span>
+            </div>
+            <div class="policy-item">
+              <span class="policy-icon">🛡️</span>
+              <div>
+                <strong>SQL Injection Prevention</strong>
+                <p>Input sanitization on all form fields</p>
+              </div>
+              <span class="badge badge-success">Active</span>
+            </div>
+          </div>
+        </div>
+
+      } <!-- end admin guard -->
+    </div>
+  }
+
+  <!-- ══ SYSTEM TAB ══ -->
+  @if (activeTab() === 'system') {
+    <div class="tab-content">
+      <h2 class="section-title">System Information</h2>
+
+      <div class="system-grid">
+        <div class="card">
+          <h3 class="card-title">Infrastructure</h3>
+          <div class="sys-info-list">
+            <div class="sys-info-item">
+              <span class="sys-label">Cloud Provider</span>
+              <span class="sys-value">AWS / GCP</span>
+            </div>
+            <div class="sys-info-item">
+              <span class="sys-label">Containerization</span>
+              <span class="sys-value">Docker + Kubernetes</span>
+            </div>
+            <div class="sys-info-item">
+              <span class="sys-label">Database</span>
+              <span class="sys-value">SQL Server</span>
+            </div>
+            <div class="sys-info-item">
+              <span class="sys-label">Notifications</span>
+              <span class="sys-value">Firebase Cloud Messaging</span>
+            </div>
+            <div class="sys-info-item">
+              <span class="sys-label">Backend</span>
+              <span class="sys-value">Node.js / Python FastAPI</span>
+            </div>
+            <div class="sys-info-item">
+              <span class="sys-label">Frontend</span>
+              <span class="sys-value">Angular 19 + SCSS</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Performance KPIs</h3>
+          <div class="kpi-list">
+            <div class="kpi-item">
+              <div class="kpi-info">
+                <span class="kpi-name">Detection Accuracy</span>
+                <span class="kpi-target">Target: ≥ 95%</span>
+              </div>
+              <div class="kpi-bar-wrap">
+                <div class="kpi-bar">
+                  <div class="kpi-fill" style="width: 96.2%; background: var(--accent-green)"></div>
+                </div>
+                <span class="kpi-value success">96.2%</span>
+              </div>
+            </div>
+            <div class="kpi-item">
+              <div class="kpi-info">
+                <span class="kpi-name">Alert Latency</span>
+                <span class="kpi-target">Target: ≤ 2s</span>
+              </div>
+              <div class="kpi-bar-wrap">
+                <div class="kpi-bar">
+                  <div class="kpi-fill" style="width: 90%; background: var(--accent-green)"></div>
+                </div>
+                <span class="kpi-value success">1.8s</span>
+              </div>
+            </div>
+            <div class="kpi-item">
+              <div class="kpi-info">
+                <span class="kpi-name">System Uptime</span>
+                <span class="kpi-target">Target: ≥ 99%</span>
+              </div>
+              <div class="kpi-bar-wrap">
+                <div class="kpi-bar">
+                  <div class="kpi-fill" style="width: 99.7%; background: var(--accent-green)"></div>
+                </div>
+                <span class="kpi-value success">99.7%</span>
+              </div>
+            </div>
+            <div class="kpi-item">
+              <div class="kpi-info">
+                <span class="kpi-name">Frame Latency</span>
+                <span class="kpi-target">Target: &lt; 15ms</span>
+              </div>
+              <div class="kpi-bar-wrap">
+                <div class="kpi-bar">
+                  <div class="kpi-fill" style="width: 80%; background: var(--accent-blue)"></div>
+                </div>
+                <span class="kpi-value info">12ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+
+</div>
+
+<!-- ══ Camera Delete Confirm Modal ══ -->
+@if (deleteCameraConfirmId()) {
+  <div class="modal-overlay" (click)="cancelDeleteCamera()">
+    <div class="modal-content modal-sm" (click)="$event.stopPropagation()">
+
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <div class="modal-icon-wrap" style="background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.25);color:var(--accent-red)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+              <path d="M10 11v6M14 11v6"/>
+              <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Remove Camera</h3>
+            <p>This action cannot be undone</p>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-icon" (click)="cancelDeleteCamera()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="delete-confirm-body">
+          <div class="delete-camera-preview">
+            <div class="cam-delete-status-dot" [class]="getCameraDeleteTarget()?.status"></div>
+            <div>
+              <div class="user-cell-name">{{ getCameraDeleteTarget()?.name }}</div>
+              <div class="user-cell-email">
+                📍 {{ getCameraDeleteTarget()?.location }} &nbsp;·&nbsp;
+                🌐 {{ getCameraDeleteTarget()?.ipAddress }}:{{ getCameraDeleteTarget()?.port }}
+              </div>
+            </div>
+            <span class="badge badge-{{ getStatusClass(getCameraDeleteTarget()?.status ?? '') }}" style="margin-left:auto">
+              {{ getCameraDeleteTarget()?.status }}
+            </span>
+          </div>
+          <p class="delete-warning">
+            Are you sure you want to permanently remove
+            <strong>{{ getCameraDeleteTarget()?.name }}</strong>?
+            All associated detection history and configuration will be lost.
+          </p>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-ghost" (click)="cancelDeleteCamera()">Cancel</button>
+        <button class="btn btn-danger" (click)="executeDeleteCamera()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+          </svg>
+          Delete Camera
+        </button>
+      </div>
+
+    </div>
+  </div>
+}
+
+<!-- ══ User Add/Edit Modal ══ -->
+@if (userModalOpen()) {
+  <div class="modal-overlay" (click)="closeUserModal()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <div class="modal-icon-wrap" [style.background]="userModalMode() === 'add' ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)'"
+               [style.border-color]="userModalMode() === 'add' ? 'rgba(16,185,129,0.25)' : 'rgba(59,130,246,0.25)'"
+               [style.color]="userModalMode() === 'add' ? 'var(--accent-green)' : 'var(--accent-blue)'">
+            @if (userModalMode() === 'add') {
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+              </svg>
+            } @else {
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+            }
+          </div>
+          <div>
+            <h3>{{ userModalTitle() }}</h3>
+            <p>{{ userModalMode() === 'add' ? 'Create a new user account with role-based access' : 'Update user details and permissions' }}</p>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-icon" (click)="closeUserModal()">✕</button>
+      </div>
+
+      <div class="modal-body">
+
+        <!-- Inline error -->
+        @if (saveError()) {
+          <div class="modal-error">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            {{ saveError() }}
+          </div>
+        }
+
+        <div class="modal-form-grid">
+
+          <div class="form-group">
+            <label>Username *</label>
+            <input type="text" class="form-control" placeholder="e.g. op.john"
+                   [(ngModel)]="userForm.username" autocomplete="off" />
+          </div>
+
+          <div class="form-group">
+            <label>Email Address *</label>
+            <input type="email" class="form-control" placeholder="john@cctvguard.com"
+                   [(ngModel)]="userForm.email" autocomplete="off" />
+          </div>
+
+          <div class="form-group">
+            <label>Role *</label>
+            <select class="form-control" [(ngModel)]="userForm.role">
+              <option value="Admin">👑 Admin — Full Access</option>
+              <option value="Operator">🛡️ Operator — Operational Access</option>
+              <option value="Viewer">👁️ Viewer — Read Only</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Account Status</label>
+            <select class="form-control" [(ngModel)]="userForm.status">
+              <option value="active">✅ Active</option>
+              <option value="suspended">🚫 Suspended</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>{{ userModalMode() === 'add' ? 'Password *' : 'New Password (leave blank to keep)' }}</label>
+            <input type="password" class="form-control"
+                   [placeholder]="userModalMode() === 'add' ? 'Min. 8 characters' : 'Leave blank to keep current'"
+                   [(ngModel)]="userForm.password" autocomplete="new-password" />
+            <span class="field-hint">Minimum 8 characters, alphanumeric mix</span>
+          </div>
+
+          <div class="form-group">
+            <label>Confirm Password {{ userModalMode() === 'add' ? '*' : '' }}</label>
+            <input type="password" class="form-control" placeholder="Re-enter password"
+                   [(ngModel)]="userForm.confirmPassword" autocomplete="new-password" />
+          </div>
+
+        </div>
+
+        <!-- Role description hint -->
+        <div class="role-hint-box">
+          @if (userForm.role === 'Admin') {
+            <span class="role-hint-icon">👑</span>
+            <span class="role-hint-text"><strong>Admin:</strong> Full system access — can manage cameras, AI, users, and all settings.</span>
+          }
+          @if (userForm.role === 'Operator') {
+            <span class="role-hint-icon">🛡️</span>
+            <span class="role-hint-text"><strong>Operator:</strong> Can monitor feeds, acknowledge incidents, and manage detection settings. Cannot manage users.</span>
+          }
+          @if (userForm.role === 'Viewer') {
+            <span class="role-hint-icon">👁️</span>
+            <span class="role-hint-text"><strong>Viewer:</strong> Read-only access to feeds, incidents, and alerts. Cannot modify any settings.</span>
+          }
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-ghost" (click)="closeUserModal()">Cancel</button>
+        <button
+          class="btn btn-primary"
+          (click)="submitUserForm()"
+          [disabled]="!userForm.username?.trim() || !userForm.email?.trim()"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v14a2 2 0 01-2 2z"/>
+            <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+          </svg>
+          {{ userModalMode() === 'add' ? 'Create User' : 'Save Changes' }}
+        </button>
+      </div>
+
+    </div>
+  </div>
+}
+
+<!-- ══ Delete Confirm Modal ══ -->
+@if (deleteConfirmId()) {
+  <div class="modal-overlay" (click)="cancelDeleteUser()">
+    <div class="modal-content modal-sm" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <div class="modal-icon-wrap" style="background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.25);color:var(--accent-red)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+              <path d="M10 11v6M14 11v6"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Remove User</h3>
+            <p>This action cannot be undone</p>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-icon" (click)="cancelDeleteUser()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="delete-confirm-body">
+          <div class="delete-user-preview">
+            <div class="user-avatar-cell role-{{ getUserDeleteTarget()?.role?.toLowerCase() }}">
+              {{ getUserDeleteTarget()?.username?.charAt(0)?.toUpperCase() }}
+            </div>
+            <div>
+              <div class="user-cell-name">{{ getUserDeleteTarget()?.username }}</div>
+              <div class="user-cell-email">{{ getUserDeleteTarget()?.email }}</div>
+            </div>
+          </div>
+          <p class="delete-warning">
+            Are you sure you want to permanently remove <strong>{{ getUserDeleteTarget()?.username }}</strong>?
+            Their account and all associated session data will be deleted.
+          </p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" (click)="cancelDeleteUser()">Cancel</button>
+        <button class="btn btn-danger" (click)="executeDeleteUser()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+          </svg>
+          Delete User
+        </button>
+      </div>
+    </div>
+  </div>
+}
+@if (cameraModalOpen()) {
+  <div class="modal-overlay" (click)="closeModal()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+
+      <!-- Header -->
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <div class="modal-icon-wrap">
+            @if (cameraModalMode() === 'add') {
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            } @else {
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            }
+          </div>
+          <div>
+            <h3>{{ cameraModalTitle() }}</h3>
+            @if (cameraModalMode() === 'edit') {
+              <p>{{ editingId() }}</p>
+            } @else {
+              <p>Fill in the details below to register a new IP camera</p>
+            }
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-icon" (click)="closeModal()">✕</button>
+      </div>
+
+      <!-- Body -->
+      <div class="modal-body">
+        <div class="modal-form-grid">
+
+          <div class="form-group">
+            <label>Camera Name *</label>
+            <input
+              type="text"
+              class="form-control"
+              placeholder="e.g. Main Entrance"
+              [(ngModel)]="cameraForm.name"
+              autofocus
+            />
+          </div>
+
+          <div class="form-group">
+            <label>Location</label>
+            <input
+              type="text"
+              class="form-control"
+              placeholder="e.g. Building A – Gate 1"
+              [(ngModel)]="cameraForm.location"
+            />
+          </div>
+
+          <div class="form-group">
+            <label>IP Address *</label>
+            <input
+              type="text"
+              class="form-control"
+              placeholder="192.168.1.xxx"
+              [(ngModel)]="cameraForm.ipAddress"
+            />
+          </div>
+
+          <div class="form-group">
+            <label>Port (1–65535)</label>
+            <input
+              type="number"
+              class="form-control"
+              placeholder="554"
+              [(ngModel)]="cameraForm.port"
+              min="1" max="65535"
+            />
+          </div>
+
+          <div class="form-group">
+            <label>Confidence Threshold (0.0–1.0)</label>
+            <input
+              type="number"
+              class="form-control"
+              placeholder="0.85"
+              [(ngModel)]="cameraForm.confidenceThreshold"
+              min="0" max="1" step="0.05"
+            />
+          </div>
+
+          <div class="form-group">
+            <label>Frame Rate (fps)</label>
+            <input
+              type="number"
+              class="form-control"
+              placeholder="30"
+              [(ngModel)]="cameraForm.frameRate"
+              min="1" max="60"
+            />
+          </div>
+
+          <div class="form-group" style="grid-column: 1 / -1">
+            <label>Stream URL</label>
+
+            <!-- Protocol selector + URL input combined -->
+            <div class="stream-url-row">
+              <select
+                class="form-control protocol-select"
+                [ngModel]="getProtocol(cameraForm.rtspUrl)"
+                (ngModelChange)="onProtocolChange($event)"
+              >
+                <option value="rtsp">RTSP</option>
+                <option value="rtmp">RTMP</option>
+              </select>
+              <input
+                type="text"
+                class="form-control"
+                [placeholder]="getStreamPlaceholder(cameraForm.rtspUrl)"
+                [(ngModel)]="cameraForm.rtspUrl"
+              />
+            </div>
+
+            <!-- Dynamic hint based on selected protocol -->
+            @if (getProtocol(cameraForm.rtspUrl) === 'rtsp') {
+              <span class="field-hint">
+                📡 <strong>RTSP</strong> — Standard IP cameras (Hikvision, Dahua, generic).
+                Format: <code>rtsp://[user:pass@]&lt;ip&gt;:554/&lt;path&gt;</code><br>
+                Examples: <code>rtsp://192.168.1.10:554/stream1</code> &nbsp;·&nbsp;
+                <code>rtsp://admin:admin@192.168.1.10:554/Streaming/Channels/101</code>
+              </span>
+            } @else {
+              <span class="field-hint">
+                📡 <strong>RTMP</strong> — Streaming devices, NVRs, some IP cameras on port 1935.
+                Format: <code>rtmp://[user:pass@]&lt;ip&gt;:1935[/path]</code><br>
+                Examples: <code>rtmp://192.168.1.10:1935</code> &nbsp;·&nbsp;
+                <code>rtmp://admin:admin@192.168.1.10:1935/live</code>
+              </span>
+            }
+          </div>
+
+          @if (cameraModalMode() === 'edit') {
+            <div class="form-group">
+              <label>Status</label>
+              <select class="form-control" [(ngModel)]="cameraForm.status">
+                <option value="online">Online</option>
+                <option value="offline">Offline</option>
+                <option value="error">Error</option>
+              </select>
+            </div>
+          }
+
+        </div>
+
+        <!-- AI Detection toggle -->
+        <div class="modal-toggle-row">
+          <label class="toggle-label">
+            <span class="toggle-text">Enable AI Detection</span>
+            <label class="switch">
+              <input type="checkbox" [(ngModel)]="cameraForm.detectionEnabled" />
+              <span class="slider"></span>
+            </label>
+          </label>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="modal-footer">
+        <button class="btn btn-ghost" (click)="closeModal()">Cancel</button>
+        <button
+          class="btn btn-primary"
+          (click)="submitCameraForm()"
+          [disabled]="!cameraForm.name?.trim() || !cameraForm.ipAddress?.trim()"
+        >
+          {{ cameraModalSubmitLabel() }}
+        </button>
+      </div>
+
+    </div>
+  </div>
+}

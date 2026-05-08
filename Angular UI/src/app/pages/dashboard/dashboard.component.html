@@ -1,0 +1,201 @@
+<div class="dashboard">
+  <!-- Page header -->
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Live Monitor</h1>
+      <p class="page-subtitle">Real-time surveillance feeds with AI threat detection</p>
+    </div>
+    <div class="header-actions">
+      <div class="grid-toggle">
+        <button class="btn btn-ghost btn-sm" [class.active]="gridView() === '2x2'" (click)="gridView.set('2x2')" title="2x2 grid">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="0" y="0" width="7" height="7" rx="1"/><rect x="9" y="0" width="7" height="7" rx="1"/>
+            <rect x="0" y="9" width="7" height="7" rx="1"/><rect x="9" y="9" width="7" height="7" rx="1"/>
+          </svg>
+        </button>
+        <button class="btn btn-ghost btn-sm" [class.active]="gridView() === '3x2'" (click)="gridView.set('3x2')" title="3x2 grid">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="0" y="0" width="4" height="7" rx="1"/><rect x="6" y="0" width="4" height="7" rx="1"/><rect x="12" y="0" width="4" height="7" rx="1"/>
+            <rect x="0" y="9" width="4" height="7" rx="1"/><rect x="6" y="9" width="4" height="7" rx="1"/><rect x="12" y="9" width="4" height="7" rx="1"/>
+          </svg>
+        </button>
+        <button class="btn btn-ghost btn-sm" [class.active]="gridView() === '1x1'" (click)="gridView.set('1x1')" title="Single view">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="0" y="0" width="16" height="16" rx="2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats row -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon" style="background: rgba(59,130,246,0.1)">📹</div>
+      <div class="stat-info">
+        <div class="stat-value">{{ stats().onlineCameras }}<span class="stat-total">/{{ stats().totalCameras }}</span></div>
+        <div class="stat-label">Cameras Online</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="background: rgba(239,68,68,0.1)">⚠️</div>
+      <div class="stat-info">
+        <div class="stat-value">{{ stats().todayIncidents }}</div>
+        <div class="stat-label">Today's Incidents</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="background: rgba(245,158,11,0.1)">🔔</div>
+      <div class="stat-info">
+        <div class="stat-value">{{ stats().activeAlerts }}</div>
+        <div class="stat-label">Active Alerts</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="background: rgba(16,185,129,0.1)">🎯</div>
+      <div class="stat-info">
+        <div class="stat-value">{{ stats().detectionAccuracy }}%</div>
+        <div class="stat-label">Detection Accuracy</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="background: rgba(99,102,241,0.1)">⚡</div>
+      <div class="stat-info">
+        <div class="stat-value">{{ stats().avgLatency }}s</div>
+        <div class="stat-label">Avg Alert Latency</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="monitor-layout">
+    <!-- Camera grid -->
+    <div class="camera-section">
+      <div class="section-header">
+        <h2>Camera Feeds</h2>
+        <span class="live-indicator"><span class="live-dot"></span> LIVE</span>
+      </div>
+
+      <div class="camera-grid" [class]="'grid-' + gridView()">
+        @for (cam of cameras(); track cam.id) {
+          <div class="camera-card" [class.offline]="cam.status !== 'online'" (click)="selectCamera(cam)">
+            <!-- Feed area -->
+            <div class="camera-feed">
+              @if (cam.rtspUrl) {
+                <app-live-feed [camera]="cam" [autoStart]="true" style="height:100%;display:block" />
+              } @else {
+                <div class="feed-offline">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                    <path d="M21 21H3a2 2 0 01-2-2V8a2 2 0 012-2h3m3-3h6l2 3h4a2 2 0 012 2v9.34"/>
+                  </svg>
+                  <span>{{ cam.status === 'offline' ? 'Camera Offline' : cam.status === 'error' ? 'Stream Error' : 'No Stream URL' }}</span>
+                </div>
+              }
+
+              <!-- Camera overlay info -->
+              <div class="camera-overlay-top">
+                <span class="cam-id">{{ cam.id }}</span>
+                <span class="badge badge-{{ getStatusClass(cam.status) }}">{{ cam.status }}</span>
+              </div>
+
+              @if (cam.status === 'online' && cam.detectionEnabled) {
+                <div class="ai-badge">
+                  <span>AI</span>
+                </div>
+              }
+            </div>
+
+            <!-- Camera info bar -->
+            <div class="camera-info">
+              <div class="cam-name">{{ cam.name }}</div>
+              <div class="cam-location">{{ cam.location }}</div>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+
+    <!-- Recent incidents sidebar -->
+    <div class="incidents-sidebar-wrapper">
+      <div class="incidents-sidebar">
+        <div class="section-header">
+          <h2>Recent Incidents</h2>
+          <span class="badge badge-danger">{{ recentIncidents().length }}</span>
+        </div>
+
+        <div class="incident-list">
+          @for (inc of recentIncidents(); track inc.id) {
+            <div class="incident-item" [class]="'severity-' + inc.severity">
+              <div class="incident-icon">{{ getIncidentIcon(inc.type) }}</div>
+              <div class="incident-details">
+                <div class="incident-type">{{ inc.type | titlecase }}</div>
+                <div class="incident-camera">{{ inc.cameraName }}</div>
+                <div class="incident-meta">
+                  <span class="badge badge-{{ getSeverityClass(inc.severity) }}">{{ inc.severity }}</span>
+                  <span class="confidence">{{ (inc.confidence * 100).toFixed(0) }}%</span>
+                  <span class="time">{{ formatTime(inc.timestamp) }}</span>
+                </div>
+              </div>
+              <div class="incident-status">
+                <span class="badge badge-{{ inc.status === 'new' ? 'danger' : inc.status === 'acknowledged' ? 'warning' : 'success' }}">
+                  {{ inc.status }}
+                </span>
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Camera detail modal -->
+@if (selectedCamera()) {
+  <div class="modal-overlay" (click)="closeModal()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h3>{{ selectedCamera()!.name }}</h3>
+          <p>{{ selectedCamera()!.location }} · {{ selectedCamera()!.ipAddress }}:{{ selectedCamera()!.port }}</p>
+        </div>
+        <button class="btn btn-ghost btn-icon" (click)="closeModal()">✕</button>
+      </div>
+
+      <div class="modal-feed">
+        @if (selectedCamera()!.rtspUrl) {
+          <app-live-feed [camera]="selectedCamera()!" [autoStart]="true" style="height:100%;display:block" />
+        } @else {
+          <div class="feed-offline large">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <line x1="1" y1="1" x2="23" y2="23"/>
+              <path d="M21 21H3a2 2 0 01-2-2V8a2 2 0 012-2h3m3-3h6l2 3h4a2 2 0 012 2v9.34"/>
+            </svg>
+            <span>No stream URL configured</span>
+          </div>
+        }
+      </div>
+
+      <div class="modal-stats">
+        <div class="modal-stat">
+          <span class="label">Status</span>
+          <span class="badge badge-{{ getStatusClass(selectedCamera()!.status) }}">{{ selectedCamera()!.status }}</span>
+        </div>
+        <div class="modal-stat">
+          <span class="label">AI Detection</span>
+          <span class="badge badge-{{ selectedCamera()!.detectionEnabled ? 'success' : 'secondary' }}">
+            {{ selectedCamera()!.detectionEnabled ? 'Enabled' : 'Disabled' }}
+          </span>
+        </div>
+        <div class="modal-stat">
+          <span class="label">Confidence</span>
+          <span class="value">{{ (selectedCamera()!.confidenceThreshold * 100).toFixed(0) }}%</span>
+        </div>
+        <div class="modal-stat">
+          <span class="label">Frame Rate</span>
+          <span class="value">{{ selectedCamera()!.frameRate }} fps</span>
+        </div>
+      </div>
+    </div>
+  </div>
+}
