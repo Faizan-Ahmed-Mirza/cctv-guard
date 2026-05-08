@@ -27,8 +27,15 @@ builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<AlertService>();
 builder.Services.AddScoped<AnalyticsService>();
 builder.Services.AddScoped<HubNotificationService>();
-// Singleton so FFmpeg processes survive across requests
 builder.Services.AddSingleton<CameraStreamService>();
+
+// HTTP client for Python AI microservice
+builder.Services.AddHttpClient("AiService", client =>
+{
+    client.BaseAddress = new Uri(
+        builder.Configuration["AiService:BaseUrl"] ?? "http://localhost:8000");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
 
 // ── JWT Authentication ────────────────────────────────────────────────────────
 var jwtSecret = builder.Configuration["Jwt:Secret"]!;
@@ -131,7 +138,9 @@ builder.Services.AddSwaggerGen(c =>
 // ─────────────────────────────────────────────────────────────────────────────
 var app = builder.Build();
 
-// ── Auto-migrate + Seed on startup ────────────────────────────────────────────
+// ── Auto-migrate on startup ───────────────────────────────────────────────────
+// Seed only the minimum required system config (AiSettings row).
+// All other data (users, cameras, incidents) comes from the real database.
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -171,6 +180,9 @@ app.UseAuthorization();
 app.MapControllers();
 
 // ── SignalR Hub endpoints ─────────────────────────────────────────────────────
+// UseWebSockets must be called before MapHub so the WebSocket upgrade works.
+// Required when Angular uses skipNegotiation: true + WebSockets-only transport.
+app.UseWebSockets();
 app.MapHub<AlertsHub>("/hubs/alerts");
 app.MapHub<CameraStreamHub>("/hubs/camera-stream");
 

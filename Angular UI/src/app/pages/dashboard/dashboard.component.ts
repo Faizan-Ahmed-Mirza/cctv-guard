@@ -1,5 +1,5 @@
 import { Component, signal, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { CommonModule, TitleCasePipe } from '@angular/common';
 import { ApiService } from '../../services/api.service';
 import { Camera, Incident, SystemStats } from '../../models';
 import { LiveFeedComponent } from '../../shared/live-feed/live-feed.component';
@@ -8,17 +8,20 @@ import { firstValueFrom } from 'rxjs';
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, LiveFeedComponent],
+  imports: [CommonModule, TitleCasePipe, LiveFeedComponent],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss'
 })
 export class DashboardComponent implements OnInit {
-  stats         = signal<SystemStats>({ totalCameras: 0, onlineCameras: 0, todayIncidents: 0, activeAlerts: 0, systemUptime: '—', avgLatency: 0, detectionAccuracy: 0 });
-  cameras       = signal<Camera[]>([]);
+  stats           = signal<SystemStats>({ totalCameras: 0, onlineCameras: 0, todayIncidents: 0, activeAlerts: 0, systemUptime: '—', avgLatency: 0, detectionAccuracy: 0 });
+  cameras         = signal<Camera[]>([]);
   recentIncidents = signal<Incident[]>([]);
   selectedCamera  = signal<Camera | null>(null);
   gridView        = signal<'2x2' | '3x2' | '1x1'>('2x2');
   loading         = signal(true);
+
+  // Tracks which cameras are currently toggling (to show spinner on btn)
+  togglingStream  = signal<Set<string>>(new Set());
 
   constructor(private api: ApiService) {}
 
@@ -37,8 +40,38 @@ export class DashboardComponent implements OnInit {
     }
   }
 
-  selectCamera(cam: Camera): void  { this.selectedCamera.set(cam); }
-  closeModal(): void               { this.selectedCamera.set(null); }
+  selectCamera(cam: Camera): void { this.selectedCamera.set(cam); }
+  closeModal(): void              { this.selectedCamera.set(null); }
+
+  isStreamToggling(camId: string): boolean {
+    return this.togglingStream().has(camId);
+  }
+
+  async toggleStream(cam: Camera, event: Event): Promise<void> {
+    event.stopPropagation(); // don't open the modal
+    if (this.isStreamToggling(cam.id)) return;
+
+    this.togglingStream.update(s => new Set(s).add(cam.id));
+    try {
+      if (cam.status === 'online') {
+        // Stop the stream
+        await firstValueFrom(this.api.stopCameraStream(cam.id));
+        this.cameras.update(list =>
+          list.map(c => c.id === cam.id ? { ...c, status: 'offline' as const } : c)
+        );
+      } else {
+        // Start the stream
+        await firstValueFrom(this.api.startCameraStream(cam.id));
+        this.cameras.update(list =>
+          list.map(c => c.id === cam.id ? { ...c, status: 'online' as const } : c)
+        );
+      }
+    } catch {
+      // Status will self-correct on next poll — just remove spinner
+    } finally {
+      this.togglingStream.update(s => { const n = new Set(s); n.delete(cam.id); return n; });
+    }
+  }
 
   getStatusClass(status: string): string {
     return ({ online: 'success', offline: 'secondary', error: 'danger' } as Record<string,string>)[status] ?? 'secondary';

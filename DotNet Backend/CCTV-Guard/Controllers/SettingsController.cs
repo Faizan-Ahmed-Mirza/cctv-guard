@@ -19,7 +19,13 @@ public class SettingsController : ControllerBase
     public async Task<IActionResult> GetAi()
     {
         var settings = await _db.AiSettings.FindAsync(1);
-        if (settings == null) return NotFound();
+        if (settings == null)
+        {
+            // Auto-create defaults if the row was somehow deleted
+            settings = new AiSettings { Id = 1 };
+            _db.AiSettings.Add(settings);
+            await _db.SaveChangesAsync();
+        }
         return Ok(settings);
     }
 

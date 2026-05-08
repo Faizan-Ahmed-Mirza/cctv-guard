@@ -165,7 +165,17 @@ public class CamerasController : ControllerBase
 
     [HttpGet("{id}/stream/status")]
     public IActionResult StreamStatus(string id) =>
-        Ok(new { cameraId = id, streaming = _streamService.IsStreaming(id) });
+        Ok(new { cameraId = id, streaming = _streamService.IsStreaming(id), playlistUrl = (string?)null });
+
+    [HttpPost("{id}/stream/start")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> StartStream(string id)
+    {
+        var cam = await _cameraService.GetByIdAsync(id);
+        if (cam == null) return NotFound();
+        await _streamService.StartAsync(id);
+        return Ok(new { cameraId = id, streaming = true, playlistUrl = (string?)null });
+    }
 
     [HttpPost("{id}/stream/stop")]
     [Authorize(Roles = "Admin,Operator")]

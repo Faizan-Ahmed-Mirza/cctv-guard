@@ -8,21 +8,23 @@ namespace CCTV_Guard.Services;
 public class CameraService
 {
     private readonly AppDbContext _db;
+    private readonly CameraStreamService _streamService;
 
-    public CameraService(AppDbContext db) => _db = db;
-
-    public async Task<List<CameraDto>> GetAllAsync()
+    public CameraService(AppDbContext db, CameraStreamService streamService)
     {
-        return await _db.Cameras
-            .Where(c => !c.IsDeleted)
+        _db            = db;
+        _streamService = streamService;
+    }
+
+    public async Task<List<CameraDto>> GetAllAsync() =>
+        await _db.Cameras
             .OrderBy(c => c.Name)
             .Select(c => ToDto(c))
             .ToListAsync();
-    }
 
     public async Task<CameraDto?> GetByIdAsync(string id)
     {
-        var c = await _db.Cameras.FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted);
+        var c = await _db.Cameras.FirstOrDefaultAsync(c => c.Id == id);
         return c == null ? null : ToDto(c);
     }
 
@@ -31,17 +33,17 @@ public class CameraService
         var id = "cam-" + Guid.NewGuid().ToString("N")[..8];
         var camera = new Camera
         {
-            Id = id,
-            Name = req.Name,
-            Location = req.Location,
-            IpAddress = req.IpAddress,
-            Port = req.Port,
-            DetectionEnabled = req.DetectionEnabled,
+            Id                  = id,
+            Name                = req.Name,
+            Location            = req.Location,
+            IpAddress           = req.IpAddress,
+            Port                = req.Port,
+            DetectionEnabled    = req.DetectionEnabled,
             ConfidenceThreshold = req.ConfidenceThreshold,
-            FrameRate = req.FrameRate,
-            StreamUrl = req.StreamUrl,
-            RtspUrl = req.RtspUrl,
-            Status = "offline"
+            FrameRate           = req.FrameRate,
+            StreamUrl           = req.StreamUrl,
+            RtspUrl             = req.RtspUrl,
+            Status              = "offline"
         };
         _db.Cameras.Add(camera);
         await _db.SaveChangesAsync();
@@ -50,29 +52,40 @@ public class CameraService
 
     public async Task<CameraDto?> UpdateAsync(string id, UpdateCameraRequest req)
     {
-        var camera = await _db.Cameras.FindAsync(id);
+        // Use FirstOrDefaultAsync — FindAsync bypasses the global IsDeleted query filter
+        var camera = await _db.Cameras.FirstOrDefaultAsync(c => c.Id == id);
         if (camera == null) return null;
 
-        camera.Name = req.Name;
-        camera.Location = req.Location;
-        camera.IpAddress = req.IpAddress;
-        camera.Port = req.Port;
-        camera.DetectionEnabled = req.DetectionEnabled;
+        var rtspChanged = camera.RtspUrl != req.RtspUrl;
+
+        camera.Name                = req.Name;
+        camera.Location            = req.Location;
+        camera.IpAddress           = req.IpAddress;
+        camera.Port                = req.Port;
+        camera.DetectionEnabled    = req.DetectionEnabled;
         camera.ConfidenceThreshold = req.ConfidenceThreshold;
-        camera.FrameRate = req.FrameRate;
-        camera.StreamUrl = req.StreamUrl;
-        camera.RtspUrl = req.RtspUrl;
-        camera.Status = req.Status;
+        camera.FrameRate           = req.FrameRate;
+        camera.StreamUrl           = req.StreamUrl;
+        camera.RtspUrl             = req.RtspUrl;
+        // Do NOT update Status from the request — status is managed by CameraStreamService only
 
         await _db.SaveChangesAsync();
+
+        // If RTSP URL changed, restart stream so new URL takes effect immediately
+        if (rtspChanged)
+        {
+            await _streamService.StopAsync(id);
+            if (!string.IsNullOrWhiteSpace(req.RtspUrl))
+                await _streamService.StartAsync(id);
+        }
+
         return ToDto(camera);
     }
 
     public async Task<CameraDto?> PatchDetectionAsync(string id, bool detectionEnabled)
     {
-        var camera = await _db.Cameras.FindAsync(id);
+        var camera = await _db.Cameras.FirstOrDefaultAsync(c => c.Id == id);
         if (camera == null) return null;
-
         camera.DetectionEnabled = detectionEnabled;
         await _db.SaveChangesAsync();
         return ToDto(camera);
@@ -83,7 +96,10 @@ public class CameraService
         var camera = await _db.Cameras.FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted);
         if (camera == null) return false;
 
-        // Soft delete — marks as deleted, preserves all incident and alert history
+        // Stop stream if running
+        await _streamService.StopAsync(id);
+
+        // Soft delete — preserves all incident and alert history
         camera.IsDeleted = true;
         camera.Status    = "offline";
         await _db.SaveChangesAsync();
@@ -92,17 +108,17 @@ public class CameraService
 
     private static CameraDto ToDto(Camera c) => new()
     {
-        Id = c.Id,
-        Name = c.Name,
-        Location = c.Location,
-        IpAddress = c.IpAddress,
-        Port = c.Port,
-        Status = c.Status,
-        StreamUrl = c.StreamUrl,
-        RtspUrl = c.RtspUrl,
-        DetectionEnabled = c.DetectionEnabled,
+        Id                  = c.Id,
+        Name                = c.Name,
+        Location            = c.Location,
+        IpAddress           = c.IpAddress,
+        Port                = c.Port,
+        Status              = c.Status,
+        StreamUrl           = c.StreamUrl,
+        RtspUrl             = c.RtspUrl,
+        DetectionEnabled    = c.DetectionEnabled,
         ConfidenceThreshold = c.ConfidenceThreshold,
-        FrameRate = c.FrameRate,
-        LastSeen = c.LastSeen
+        FrameRate           = c.FrameRate,
+        LastSeen            = c.LastSeen
     };
 }

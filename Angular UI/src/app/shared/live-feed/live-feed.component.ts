@@ -1,6 +1,6 @@
 import {
   Component, Input, OnInit, OnDestroy,
-  ElementRef, ViewChild, signal, NgZone
+  ElementRef, ViewChild, signal, NgZone, ChangeDetectionStrategy
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../services/auth.service';
@@ -12,16 +12,12 @@ import * as signalR from '@microsoft/signalr';
   selector: 'app-live-feed',
   standalone: true,
   imports: [CommonModule],
+  changeDetection: ChangeDetectionStrategy.OnPush, // only re-render on signal changes
   template: `
     <div class="live-feed-wrapper">
-
-      <!-- Layer 1: video canvas — JPEG frames drawn here -->
       <canvas #videoCanvas class="video-canvas"></canvas>
-
-      <!-- Layer 2: detection overlay — bounding boxes drawn here -->
       <canvas #overlayCanvas class="overlay-canvas"></canvas>
 
-      <!-- State overlay — shown when not streaming -->
       @if (!isStreaming()) {
         <div class="feed-state">
           @if (loading()) {
@@ -44,112 +40,53 @@ import * as signalR from '@microsoft/signalr';
         </div>
       }
 
-      <!-- LIVE badge -->
       @if (isStreaming()) {
-        <div class="live-badge">
-          <span class="live-dot"></span> LIVE
-        </div>
-      }
-
-      <!-- FPS counter (dev aid) -->
-      @if (isStreaming()) {
+        <div class="live-badge"><span class="live-dot"></span> LIVE</div>
         <div class="fps-badge">{{ fps() }} fps</div>
       }
     </div>
   `,
   styles: [`
+    :host { display: block; width: 100%; height: 100%; }
     .live-feed-wrapper {
-      position: relative;
-      width: 100%;
-      height: 100%;
-      background: #0a0a0f;
-      border-radius: 6px;
-      overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      position: relative; width: 100%; height: 100%;
+      background: #0a0a0f; border-radius: 6px; overflow: hidden;
     }
     .video-canvas {
-      /* Let canvas render at its natural pixel size, wrapper clips it */
-      max-width: 100%;
-      max-height: 100%;
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      display: block;
+      width: 100%; height: 100%; display: block; object-fit: cover;
     }
     .overlay-canvas {
-      position: absolute;
-      top: 0; left: 0;
-      max-width: 100%;
-      max-height: 100%;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%; pointer-events: none;
     }
     .feed-state {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      color: #6b7280;
-      font-size: 12px;
-      background: #0a0a0f;
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 8px;
+      color: #6b7280; font-size: 12px; background: #0a0a0f;
     }
     .spinner {
-      width: 24px; height: 24px;
-      border: 2px solid #374151;
-      border-top-color: #3b82f6;
-      border-radius: 50%;
+      width: 24px; height: 24px; border: 2px solid #374151;
+      border-top-color: #3b82f6; border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .retry-btn {
-      margin-top: 4px;
-      padding: 4px 12px;
-      background: #1d4ed8;
-      color: #fff;
-      border: none;
-      border-radius: 4px;
-      font-size: 11px;
-      cursor: pointer;
+      margin-top: 4px; padding: 4px 12px; background: #1d4ed8;
+      color: #fff; border: none; border-radius: 4px; font-size: 11px; cursor: pointer;
     }
-    .retry-btn:hover { background: #2563eb; }
     .live-badge {
-      position: absolute;
-      top: 8px; right: 8px;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      background: rgba(0,0,0,0.6);
-      color: #ef4444;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      padding: 3px 7px;
-      border-radius: 4px;
+      position: absolute; top: 8px; right: 8px; display: flex; align-items: center;
+      gap: 5px; background: rgba(0,0,0,0.6); color: #ef4444;
+      font-size: 10px; font-weight: 700; padding: 3px 7px; border-radius: 4px;
     }
     .live-dot {
-      width: 6px; height: 6px;
-      background: #ef4444;
-      border-radius: 50%;
+      width: 6px; height: 6px; background: #ef4444; border-radius: 50%;
       animation: pulse 1.2s ease-in-out infinite;
     }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.3; }
-    }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
     .fps-badge {
-      position: absolute;
-      bottom: 8px; right: 8px;
-      background: rgba(0,0,0,0.5);
-      color: #9ca3af;
-      font-size: 10px;
-      padding: 2px 6px;
-      border-radius: 3px;
+      position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.5);
+      color: #9ca3af; font-size: 10px; padding: 2px 6px; border-radius: 3px;
     }
   `]
 })
@@ -157,7 +94,7 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
   @Input({ required: true }) camera!: Camera;
   @Input() autoStart = true;
 
-  @ViewChild('videoCanvas')  videoCanvasRef!:  ElementRef<HTMLCanvasElement>;
+  @ViewChild('videoCanvas')   videoCanvasRef!:   ElementRef<HTMLCanvasElement>;
   @ViewChild('overlayCanvas') overlayCanvasRef!: ElementRef<HTMLCanvasElement>;
 
   isStreaming = signal(false);
@@ -165,65 +102,70 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
   error       = signal('');
   fps         = signal(0);
 
-  private connection: signalR.HubConnection | null = null;
-  private videoCtx:   CanvasRenderingContext2D | null = null;
-  private overlayCtx: CanvasRenderingContext2D | null = null;
-
-  // FPS tracking
-  private frameCount  = 0;
+  private connection:  signalR.HubConnection | null = null;
+  private videoCtx:    CanvasRenderingContext2D | null = null;
+  private overlayCtx:  CanvasRenderingContext2D | null = null;
+  private frameCount   = 0;
   private fpsInterval: ReturnType<typeof setInterval> | null = null;
+  private clearTimer:  ReturnType<typeof setTimeout> | null = null;
 
-  // Bounding box auto-clear timer
-  private clearOverlayTimer: ReturnType<typeof setTimeout> | null = null;
+  // Frame queue — only keep the latest frame, drop stale ones
+  private latestFrame: string | null = null;
+  private renderScheduled = false;
 
   constructor(private auth: AuthService, private zone: NgZone) {}
 
   ngOnInit(): void {
     if (this.autoStart && this.camera.rtspUrl) {
-      // Delay to ensure ViewChild canvas refs are in the DOM
-      setTimeout(() => this.connect(), 300);
+      // Show spinner immediately — don't flash "Camera Offline" for 200ms
+      this.loading.set(true);
+      setTimeout(() => this.connect(), 200);
     }
   }
 
   async connect(): Promise<void> {
+    // If already connected, skip
     if (this.connection?.state === signalR.HubConnectionState.Connected) return;
+
+    // Tear down any existing (failed/disconnected) connection before retrying
+    if (this.connection) {
+      try { await this.connection.stop(); } catch { /* ignore */ }
+      this.connection = null;
+    }
 
     this.loading.set(true);
     this.error.set('');
-
-    const token = this.auth.getToken();
+    this.isStreaming.set(false);
 
     this.connection = new signalR.HubConnectionBuilder()
       .withUrl(environment.cameraStreamHubUrl, {
-        accessTokenFactory: () => token ?? ''
+        accessTokenFactory: () => this.auth.getToken() ?? '',
+        // Use WebSockets only — skip long-polling fallback for lower latency
+        transport: signalR.HttpTransportType.WebSockets,
+        skipNegotiation: true,
       })
-      .withAutomaticReconnect([0, 1000, 3000, 5000])
-      .configureLogging(signalR.LogLevel.Warning)
+      .withAutomaticReconnect([0, 2000, 5000, 10000])
+      .configureLogging(signalR.LogLevel.Error) // only log errors
       .build();
 
-    // ── Receive video frame ──────────────────────────────────────────────────
+    // ── Receive video frame — runs OUTSIDE Angular zone for max performance ──
     this.connection.on('ReceiveFrame', (data: {
-      cameraId: string;
-      frame: string;
-      frameNum: number;
-      timestamp: number;
+      cameraId: string; frame: string; frameNum: number; timestamp: number;
     }) => {
       if (data.cameraId !== this.camera.id) return;
-      if (data.frameNum === 1 || data.frameNum % 50 === 0)
-        console.log(`[LiveFeed] frame #${data.frameNum}, base64 length: ${data.frame?.length}`);
-      this.drawFrame(data.frame);
+      // Store latest frame — if render is already scheduled, it will pick this up
+      this.latestFrame = data.frame;
+      if (!this.renderScheduled) {
+        this.renderScheduled = true;
+        requestAnimationFrame(() => this.renderLatestFrame());
+      }
     });
 
-    // ── Camera went offline ──────────────────────────────────────────────────
     this.connection.on('CameraOffline', (data: { cameraId: string }) => {
       if (data.cameraId !== this.camera.id) return;
-      this.zone.run(() => {
-        this.isStreaming.set(false);
-        this.error.set('Camera disconnected');
-      });
+      this.zone.run(() => { this.isStreaming.set(false); this.error.set('Camera disconnected'); });
     });
 
-    // ── Bounding boxes from AI ───────────────────────────────────────────────
     this.connection.on('BoundingBoxes', (data: {
       cameraId: string;
       detections: Array<{ label: string; confidence: number; x: number; y: number; w: number; h: number; severity: string }>;
@@ -232,21 +174,36 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
       this.drawBoundingBoxes(data.detections);
     });
 
-    // ── Connection events ────────────────────────────────────────────────────
-    this.connection.onreconnecting(() => {
-      this.zone.run(() => this.isStreaming.set(false));
-    });
+    this.connection.onreconnecting(() =>
+      this.zone.run(() => {
+        this.isStreaming.set(false);
+        this.loading.set(true);
+        this.error.set('');
+        this.stopFpsCounter(); // stop counter — will restart when frames arrive again
+      }));
 
     this.connection.onreconnected(async () => {
-      await this.joinCamera();
+      try {
+        await this.connection!.invoke('JoinCamera', this.camera.id);
+        this.zone.run(() => this.loading.set(false));
+      } catch {
+        this.zone.run(() => { this.loading.set(false); this.error.set('Could not rejoin camera stream'); });
+      }
     });
+
+    this.connection.onclose(() =>
+      this.zone.run(() => {
+        this.isStreaming.set(false);
+        this.loading.set(false);
+        this.error.set('Connection lost — click Retry to reconnect');
+      }));
 
     try {
       await this.connection.start();
-      await this.joinCamera();
-      this.startFpsCounter();
+      await this.connection.invoke('JoinCamera', this.camera.id);
       this.zone.run(() => this.loading.set(false));
-    } catch (err: any) {
+    } catch (err) {
+      console.error(`[LiveFeed] ${this.camera.id}: connection failed`, err);
       this.zone.run(() => {
         this.loading.set(false);
         this.error.set('Could not connect to stream server');
@@ -255,154 +212,125 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
   }
 
   async disconnect(): Promise<void> {
-    if (this.connection) {
+    const conn = this.connection;
+    this.connection = null;
+    if (conn) {
       try {
-        await this.connection.invoke('LeaveCamera', this.camera.id);
-        await this.connection.stop();
+        await conn.invoke('LeaveCamera', this.camera.id);
+        await conn.stop();
       } catch { /* ignore */ }
-      this.connection = null;
     }
     this.stopFpsCounter();
     this.isStreaming.set(false);
   }
 
-  // ── Private helpers ───────────────────────────────────────────────────────
+  // ── Rendering — runs outside Angular zone, synced to browser paint cycle ──
 
-  private async joinCamera(): Promise<void> {
-    try {
-      await this.connection!.invoke('JoinCamera', this.camera.id);
-    } catch (err) {
-      this.zone.run(() => this.error.set('Failed to join camera stream'));
-    }
-  }
+  private renderLatestFrame(): void {
+    this.renderScheduled = false;
+    const frame = this.latestFrame;
+    this.latestFrame = null;
+    if (!frame) return;
 
-  private drawFrame(base64: string): void {
     const canvas = this.videoCanvasRef?.nativeElement;
     if (!canvas) return;
-
     if (!this.videoCtx) this.videoCtx = canvas.getContext('2d');
     const ctx = this.videoCtx;
     if (!ctx) return;
 
-    const src = `data:image/jpeg;base64,${base64}`;
+    // createImageBitmap decodes JPEG off the main thread (GPU-accelerated)
+    const raw   = atob(frame);
+    const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
 
-    // Try createImageBitmap first (GPU-accelerated, non-blocking)
-    // Fall back to Image element if not supported
-    if (typeof createImageBitmap !== 'undefined') {
-      const raw   = atob(base64);
-      const bytes = new Uint8Array(raw.length);
-      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-
-      createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }))
-        .then(bitmap => {
-          if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-            canvas.width  = bitmap.width;
-            canvas.height = bitmap.height;
-            const ov = this.overlayCanvasRef?.nativeElement;
-            if (ov) {
-              ov.width  = bitmap.width;
-              ov.height = bitmap.height;
-              if (!this.overlayCtx) this.overlayCtx = ov.getContext('2d');
-            }
+    createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }))
+      .then(bitmap => {
+        if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+          canvas.width  = bitmap.width;
+          canvas.height = bitmap.height;
+          const ov = this.overlayCanvasRef?.nativeElement;
+          if (ov) {
+            ov.width  = bitmap.width;
+            ov.height = bitmap.height;
+            if (!this.overlayCtx) this.overlayCtx = ov.getContext('2d');
           }
-          ctx.drawImage(bitmap, 0, 0);
-          bitmap.close();
-          this.onFrameDrawn();
-        })
-        .catch(() => this.drawWithImage(src, canvas, ctx));
-    } else {
-      this.drawWithImage(src, canvas, ctx);
-    }
-  }
-
-  private drawWithImage(
-    src: string,
-    canvas: HTMLCanvasElement,
-    ctx: CanvasRenderingContext2D
-  ): void {
-    const img = new Image();
-    img.onload = () => {
-      if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
-        canvas.width  = img.naturalWidth  || canvas.width;
-        canvas.height = img.naturalHeight || canvas.height;
-        const ov = this.overlayCanvasRef?.nativeElement;
-        if (ov) {
-          ov.width  = canvas.width;
-          ov.height = canvas.height;
-          if (!this.overlayCtx) this.overlayCtx = ov.getContext('2d');
         }
-      }
-      ctx.drawImage(img, 0, 0);
-      this.onFrameDrawn();
-    };
-    img.src = src;
-  }
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        this.frameCount++;
 
-  private onFrameDrawn(): void {
-    this.frameCount++;
-    if (!this.isStreaming()) {
-      this.zone.run(() => {
-        this.isStreaming.set(true);
-        this.loading.set(false);
-        this.error.set('');
+        if (!this.isStreaming()) {
+          this.zone.run(() => {
+            this.isStreaming.set(true);
+            this.loading.set(false);
+            this.error.set('');
+            this.startFpsCounter(); // start counting only once real frames arrive
+          });
+        }
+
+        // If another frame arrived while we were decoding, render it now
+        if (this.latestFrame) {
+          this.renderScheduled = true;
+          requestAnimationFrame(() => this.renderLatestFrame());
+        }
+      })
+      .catch(() => {
+        // Fallback to Image element
+        const img = new Image();
+        img.onload = () => {
+          if (canvas.width !== img.naturalWidth) {
+            canvas.width  = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+          }
+          ctx.drawImage(img, 0, 0);
+          this.frameCount++;
+          if (!this.isStreaming())
+            this.zone.run(() => {
+              this.isStreaming.set(true);
+              this.loading.set(false);
+              this.startFpsCounter();
+            });
+        };
+        img.src = `data:image/jpeg;base64,${frame}`;
       });
-    }
   }
 
   private drawBoundingBoxes(detections: Array<{
-    label: string; confidence: number;
-    x: number; y: number; w: number; h: number; severity: string;
+    label: string; confidence: number; x: number; y: number; w: number; h: number; severity: string;
   }>): void {
     const canvas = this.overlayCanvasRef?.nativeElement;
-    const ctx    = this.overlayCtx;
-    if (!canvas || !ctx) return;
+    if (!canvas) return;
+    if (!this.overlayCtx) this.overlayCtx = canvas.getContext('2d');
+    const ctx = this.overlayCtx;
+    if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const colorMap: Record<string, string> = {
-      critical: '#ef4444',
-      high:     '#f97316',
-      medium:   '#eab308',
-      low:      '#22c55e',
+    const colors: Record<string, string> = {
+      critical: '#ef4444', high: '#f97316', medium: '#eab308', low: '#22c55e'
     };
 
-    for (const det of detections) {
-      const color = colorMap[det.severity] ?? '#3b82f6';
+    for (const d of detections) {
+      const c = colors[d.severity] ?? '#3b82f6';
+      ctx.strokeStyle = c; ctx.lineWidth = 2;
+      ctx.strokeRect(d.x, d.y, d.w, d.h);
+      ctx.fillStyle = `${c}22`;
+      ctx.fillRect(d.x, d.y, d.w, d.h);
 
-      // Bounding box
-      ctx.strokeStyle = color;
-      ctx.lineWidth   = 2;
-      ctx.strokeRect(det.x, det.y, det.w, det.h);
-
-      // Semi-transparent fill
-      ctx.fillStyle = `${color}22`;
-      ctx.fillRect(det.x, det.y, det.w, det.h);
-
-      // Label background
-      const label   = `${det.label} ${(det.confidence * 100).toFixed(0)}%`;
-      ctx.font      = 'bold 12px sans-serif';
-      const metrics = ctx.measureText(label);
-      const lw      = metrics.width + 8;
-      const lh      = 18;
-      const lx      = det.x;
-      const ly      = det.y > lh ? det.y - lh : det.y + det.h;
-
-      ctx.fillStyle = color;
-      ctx.fillRect(lx, ly, lw, lh);
-
-      // Label text
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(label, lx + 4, ly + 13);
+      const label = `${d.label} ${(d.confidence * 100).toFixed(0)}%`;
+      ctx.font = 'bold 12px sans-serif';
+      const lw = ctx.measureText(label).width + 8;
+      const ly = d.y > 18 ? d.y - 18 : d.y + d.h;
+      ctx.fillStyle = c;
+      ctx.fillRect(d.x, ly, lw, 18);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, d.x + 4, ly + 13);
     }
 
-    // Auto-clear boxes after 3 seconds if no new detections arrive
-    if (this.clearOverlayTimer) clearTimeout(this.clearOverlayTimer);
-    this.clearOverlayTimer = setTimeout(() => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }, 3000);
+    if (this.clearTimer) clearTimeout(this.clearTimer);
+    this.clearTimer = setTimeout(() => ctx.clearRect(0, 0, canvas.width, canvas.height), 3000);
   }
 
   private startFpsCounter(): void {
+    if (this.fpsInterval) return; // already running — don't double-start
     this.fpsInterval = setInterval(() => {
       this.zone.run(() => this.fps.set(this.frameCount));
       this.frameCount = 0;
@@ -410,16 +338,20 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
   }
 
   private stopFpsCounter(): void {
-    if (this.fpsInterval) {
-      clearInterval(this.fpsInterval);
-      this.fpsInterval = null;
-    }
+    if (this.fpsInterval) { clearInterval(this.fpsInterval); this.fpsInterval = null; }
     this.fps.set(0);
   }
 
   ngOnDestroy(): void {
-    this.disconnect();
+    // Stop the connection synchronously-safe — fire and forget, component is gone
+    if (this.connection) {
+      const conn = this.connection;
+      this.connection = null;
+      conn.stop().catch(() => { /* ignore */ });
+    }
     this.stopFpsCounter();
-    if (this.clearOverlayTimer) clearTimeout(this.clearOverlayTimer);
+    if (this.clearTimer) clearTimeout(this.clearTimer);
+    this.latestFrame = null;
+    this.renderScheduled = false;
   }
 }

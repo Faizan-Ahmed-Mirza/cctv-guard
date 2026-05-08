@@ -9,6 +9,7 @@ public class AlertDto
     public string CameraName { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
-    public bool IsRead { get; set; }
-    public bool IsDismissed { get; set; }
+    // Angular model uses "read" and "dismissed" — match exactly
+    public bool Read { get; set; }
+    public bool Dismissed { get; set; }
 }

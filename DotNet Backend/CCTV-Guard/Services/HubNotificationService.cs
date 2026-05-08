@@ -18,6 +18,21 @@ public class HubNotificationService
     public Task SendNewAlertAsync(AlertDto alert) =>
         _hub.Clients.All.SendAsync("NewAlert", alert);
 
+    /// <summary>Broadcast a new alert from a raw Alert entity (used by CameraStreamService).</summary>
+    public Task SendNewAlertAsync(Models.Entities.Alert alert, string cameraName) =>
+        _hub.Clients.All.SendAsync("NewAlert", new AlertDto
+        {
+            Id         = alert.Id,
+            IncidentId = alert.IncidentId,
+            Type       = alert.Type,
+            Message    = alert.Message,
+            CameraName = cameraName,
+            Severity   = alert.Severity,
+            Timestamp  = alert.Timestamp,
+            Read       = false,
+            Dismissed  = false
+        });
+
     /// <summary>Broadcast an incident status change to ALL connected clients.</summary>
     public Task SendIncidentUpdatedAsync(string incidentId, string status) =>
         _hub.Clients.All.SendAsync("IncidentUpdated", new { id = incidentId, status });

@@ -35,12 +35,12 @@ public class AlertService
                 CameraName = a.Camera?.Name ?? string.Empty,
                 Severity = a.Severity,
                 Timestamp = a.Timestamp,
-                IsRead = rs?.IsRead ?? false,
-                IsDismissed = rs?.IsDismissed ?? false
+                Read = rs?.IsRead ?? false,
+                Dismissed = rs?.IsDismissed ?? false
             };
             return dto;
         })
-        .Where(a => a.IsDismissed == dismissed)
+        .Where(a => a.Dismissed == dismissed)
         .ToList();
     }
 

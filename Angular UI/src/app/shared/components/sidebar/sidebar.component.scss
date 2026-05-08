@@ -248,10 +248,3 @@
   color: var(--text-muted);
   &:hover { color: var(--accent-red); border-color: rgba(239, 68, 68, 0.3); }
 }
-
-/* logout button */
-.logout-btn {
-  flex-shrink: 0;
-  color: var(--text-muted);
-  &:hover { color: var(--accent-red); border-color: rgba(239, 68, 68, 0.3); }
-}
