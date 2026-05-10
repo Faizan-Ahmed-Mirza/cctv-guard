@@ -1,10 +1,11 @@
-import { Component, signal, computed, OnInit } from '@angular/core';
+import { Component, signal, computed, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ApiService, AiSettings } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
+import { CameraStatusService } from '../../services/camera-status.service';
 import { Camera, ManagedUser } from '../../models';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-configuration',
@@ -13,7 +14,7 @@ import { firstValueFrom } from 'rxjs';
   templateUrl: './configuration.component.html',
   styleUrl: './configuration.component.scss'
 })
-export class ConfigurationComponent implements OnInit {
+export class ConfigurationComponent implements OnInit, OnDestroy {
   activeTab   = signal<'cameras' | 'ai' | 'users' | 'system'>('cameras');
   saveSuccess = signal('');
   saveError   = signal('');
@@ -72,7 +73,9 @@ export class ConfigurationComponent implements OnInit {
 
   userModalTitle = computed(() => this.userModalMode() === 'add' ? 'Add New User' : 'Edit User');
 
-  constructor(private api: ApiService, public auth: AuthService) {}
+  private statusSub?: Subscription;
+
+  constructor(private api: ApiService, public auth: AuthService, private cameraStatus: CameraStatusService) {}
 
   async ngOnInit(): Promise<void> {
     try {
@@ -88,6 +91,18 @@ export class ConfigurationComponent implements OnInit {
     } finally {
       this.loading.set(false);
     }
+
+    // Listen for real-time camera status changes from the backend health checker
+    await this.cameraStatus.connect();
+    this.statusSub = this.cameraStatus.statusChange$.subscribe(event => {
+      this.cameras.update(list =>
+        list.map(c => c.id === event.id ? { ...c, status: event.status } : c)
+      );
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.statusSub?.unsubscribe();
   }
 
   // ── Camera methods ────────────────────────────────────────────────────────

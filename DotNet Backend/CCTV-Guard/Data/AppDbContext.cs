@@ -71,7 +71,8 @@ public class AppDbContext : DbContext
             e.Property(i => i.Confidence).HasPrecision(5, 4);
             e.Property(i => i.Status).HasMaxLength(20).IsRequired().HasDefaultValue("new");
             e.Property(i => i.Notes).HasMaxLength(1000);
-            e.Property(i => i.ThumbnailUrl).HasMaxLength(500);
+            // ThumbnailUrl stores a base64 data URL (~100KB+) — no length limit
+            e.Property(i => i.ThumbnailUrl).HasColumnType("nvarchar(max)");
             e.HasOne(i => i.Camera)
              .WithMany(c => c.Incidents)
              .HasForeignKey(i => i.CameraId)

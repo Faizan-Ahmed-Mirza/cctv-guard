@@ -71,21 +71,28 @@ public class AnalyticsService
 
         var monthNames = new[] { "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
 
-        return alerts
+        // Build a lookup of months that have data
+        var byMonth = alerts
             .GroupBy(a => a.Timestamp.Month)
-            .Select(g => new MonthlyAlertStatDto
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // Always return all 12 months — zero-fill months with no alerts
+        // so the chart always shows a complete year bar chart
+        return Enumerable.Range(1, 12).Select(month =>
+        {
+            var group = byMonth.TryGetValue(month, out var list) ? list : new List<Models.Entities.Alert>();
+            return new MonthlyAlertStatDto
             {
-                Month = g.Key,
-                Year = year,
-                Label = $"{monthNames[g.Key]} {year}",
-                Total = g.Count(),
-                Critical = g.Count(a => a.Severity == "critical"),
-                High = g.Count(a => a.Severity == "high"),
-                Medium = g.Count(a => a.Severity == "medium"),
-                Low = g.Count(a => a.Severity == "low")
-            })
-            .OrderBy(s => s.Month)
-            .ToList();
+                Month    = month,
+                Year     = year,
+                Label    = $"{monthNames[month]} {year}",
+                Total    = group.Count,
+                Critical = group.Count(a => a.Severity == "critical"),
+                High     = group.Count(a => a.Severity == "high"),
+                Medium   = group.Count(a => a.Severity == "medium"),
+                Low      = group.Count(a => a.Severity == "low")
+            };
+        }).ToList();
     }
 
     public async Task<List<CameraAlertStatDto>> GetCameraAlertsAsync()

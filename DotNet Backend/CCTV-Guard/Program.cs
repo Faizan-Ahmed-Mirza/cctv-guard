@@ -26,7 +26,7 @@ builder.Services.AddScoped<CameraService>();
 builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<AlertService>();
 builder.Services.AddScoped<AnalyticsService>();
-builder.Services.AddScoped<HubNotificationService>();
+builder.Services.AddSingleton<HubNotificationService>();  // Singleton — used by background service
 builder.Services.AddSingleton<CameraStreamService>();
 
 // HTTP client for Python AI microservice
@@ -36,6 +36,16 @@ builder.Services.AddHttpClient("AiService", client =>
         builder.Configuration["AiService:BaseUrl"] ?? "http://localhost:8000");
     client.Timeout = TimeSpan.FromSeconds(10);
 });
+
+// HTTP client for camera health checks (IP Webcam probe)
+builder.Services.AddHttpClient("HealthCheck", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+    client.DefaultRequestHeaders.Add("User-Agent", "CctvGuard-HealthCheck/1.0");
+});
+
+// Background service — auto-detects camera online/offline status
+builder.Services.AddHostedService<CameraHealthCheckService>();
 
 // ── JWT Authentication ────────────────────────────────────────────────────────
 var jwtSecret = builder.Configuration["Jwt:Secret"]!;

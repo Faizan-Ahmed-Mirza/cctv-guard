@@ -1,11 +1,13 @@
 import {
-  Component, Input, OnInit, OnDestroy,
-  ElementRef, ViewChild, signal, NgZone, ChangeDetectionStrategy
+  Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges,
+  ElementRef, ViewChild, signal, NgZone, ChangeDetectionStrategy, inject
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../services/auth.service';
 import { Camera } from '../../models';
 import { environment } from '../../../environments/environment';
+import { CameraStatusService } from '../../services/camera-status.service';
+import { Subscription } from 'rxjs';
 import * as signalR from '@microsoft/signalr';
 
 @Component({
@@ -90,7 +92,7 @@ import * as signalR from '@microsoft/signalr';
     }
   `]
 })
-export class LiveFeedComponent implements OnInit, OnDestroy {
+export class LiveFeedComponent implements OnInit, OnChanges, OnDestroy {
   @Input({ required: true }) camera!: Camera;
   @Input() autoStart = true;
 
@@ -108,18 +110,72 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
   private frameCount   = 0;
   private fpsInterval: ReturnType<typeof setInterval> | null = null;
   private clearTimer:  ReturnType<typeof setTimeout> | null = null;
+  private statusSub:   Subscription | null = null;
 
   // Frame queue — only keep the latest frame, drop stale ones
   private latestFrame: string | null = null;
   private renderScheduled = false;
 
+  private cameraStatusService = inject(CameraStatusService);
+
   constructor(private auth: AuthService, private zone: NgZone) {}
 
   ngOnInit(): void {
-    if (this.autoStart && this.camera.rtspUrl) {
-      // Show spinner immediately — don't flash "Camera Offline" for 200ms
+    // Auto-start if camera is online — covers both first load and navigation back
+    if (this.autoStart && this.camera.rtspUrl && this.camera.status === 'online') {
       this.loading.set(true);
-      setTimeout(() => this.connect(), 200);
+      this.error.set('');
+      this.connect();
+    }
+
+    // Subscribe to real-time status changes from SignalR
+    this.statusSub = this.cameraStatusService.statusChange$.subscribe(event => {
+      if (event.id !== this.camera.id) return;
+
+      if (event.status === 'online' && this.autoStart && this.camera.rtspUrl) {
+        // Only connect if not already streaming
+        if (this.connection?.state !== signalR.HubConnectionState.Connected) {
+          this.loading.set(true);
+          this.error.set('');
+          this.connect();
+        }
+      } else if (event.status === 'offline' || event.status === 'error') {
+        this.zone.run(() => {
+          this.isStreaming.set(false);
+          this.loading.set(false);
+          this.error.set('');
+          this.stopFpsCounter();
+        });
+        this.clearCanvas();
+      }
+    });
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    // React when parent updates the camera object (e.g. after toggleStream)
+    if (changes['camera'] && !changes['camera'].firstChange) {
+      const prev = changes['camera'].previousValue as Camera | undefined;
+      const curr = changes['camera'].currentValue as Camera;
+
+      // Camera just became online from parent update — start stream
+      if (prev?.status !== 'online' && curr?.status === 'online'
+          && this.autoStart && curr.rtspUrl
+          && this.connection?.state !== signalR.HubConnectionState.Connected) {
+        this.loading.set(true);
+        this.error.set('');
+        this.connect();
+      }
+
+      // Camera went offline from parent update — clear streaming state and canvas
+      if (prev?.status === 'online' && curr?.status !== 'online') {
+        this.zone.run(() => {
+          this.isStreaming.set(false);
+          this.loading.set(false);
+          this.error.set('');
+          this.stopFpsCounter();
+        });
+        this.clearCanvas();
+      }
     }
   }
 
@@ -153,6 +209,12 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
       cameraId: string; frame: string; frameNum: number; timestamp: number;
     }) => {
       if (data.cameraId !== this.camera.id) return;
+
+      // Drop frames older than 500ms — keeps the feed truly live.
+      // If the server is sending faster than we can render, always show the newest.
+      const age = Date.now() - data.timestamp;
+      if (age > 500) return; // stale frame — skip it
+
       // Store latest frame — if render is already scheduled, it will pick this up
       this.latestFrame = data.frame;
       if (!this.renderScheduled) {
@@ -163,7 +225,12 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
 
     this.connection.on('CameraOffline', (data: { cameraId: string }) => {
       if (data.cameraId !== this.camera.id) return;
-      this.zone.run(() => { this.isStreaming.set(false); this.error.set('Camera disconnected'); });
+      this.zone.run(() => {
+        this.isStreaming.set(false);
+        this.error.set('Camera disconnected');
+        this.stopFpsCounter();
+      });
+      this.clearCanvas(); // immediately black out the video — no frozen last frame
     });
 
     this.connection.on('BoundingBoxes', (data: {
@@ -195,7 +262,9 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
       this.zone.run(() => {
         this.isStreaming.set(false);
         this.loading.set(false);
-        this.error.set('Connection lost — click Retry to reconnect');
+        // Don't show error on close — just show offline state silently
+        // so when user navigates back it auto-reconnects cleanly
+        this.error.set('');
       }));
 
     try {
@@ -329,6 +398,24 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
     this.clearTimer = setTimeout(() => ctx.clearRect(0, 0, canvas.width, canvas.height), 3000);
   }
 
+  // ── Canvas helpers ────────────────────────────────────────────────────────
+
+  /** Immediately black out both canvases — called when camera goes offline. */
+  private clearCanvas(): void {
+    const video = this.videoCanvasRef?.nativeElement;
+    if (video && this.videoCtx) {
+      this.videoCtx.fillStyle = '#000';
+      this.videoCtx.fillRect(0, 0, video.width, video.height);
+    }
+    const overlay = this.overlayCanvasRef?.nativeElement;
+    if (overlay && this.overlayCtx) {
+      this.overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    }
+    // Drop any pending frame so it doesn't render after the clear
+    this.latestFrame = null;
+    this.renderScheduled = false;
+  }
+
   private startFpsCounter(): void {
     if (this.fpsInterval) return; // already running — don't double-start
     this.fpsInterval = setInterval(() => {
@@ -343,12 +430,15 @@ export class LiveFeedComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    // Stop the connection synchronously-safe — fire and forget, component is gone
+    // Disconnect SignalR but do NOT call LeaveCamera — this keeps FFmpeg running
+    // on the server so the stream stays alive when the user navigates back.
+    // The CameraStreamHub will clean up via OnDisconnectedAsync automatically.
     if (this.connection) {
       const conn = this.connection;
       this.connection = null;
       conn.stop().catch(() => { /* ignore */ });
     }
+    this.statusSub?.unsubscribe();
     this.stopFpsCounter();
     if (this.clearTimer) clearTimeout(this.clearTimer);
     this.latestFrame = null;

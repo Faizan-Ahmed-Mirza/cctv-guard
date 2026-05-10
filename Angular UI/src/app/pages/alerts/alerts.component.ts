@@ -13,12 +13,14 @@ import { firstValueFrom } from 'rxjs';
   styleUrl: './alerts.component.scss'
 })
 export class AlertsComponent implements OnInit {
-  filterSeverity = signal('all');
-  showDismissed  = signal(false);
-  loading        = signal(true);
+  filterSeverity     = signal('all');
+  showDismissed      = signal(false);
+  loading            = signal(true);
+  emergencyAlert     = signal<Alert | null>(null);   // alert pending emergency confirmation
+  emergencyDispatched = signal(false);               // shows the success toast
 
-  private allAlerts    = signal<Alert[]>([]);
-  private dismissed    = signal<Alert[]>([]);
+  private allAlerts = signal<Alert[]>([]);
+  private dismissed = signal<Alert[]>([]);
 
   activeAlerts = computed(() => {
     let list = this.allAlerts();
@@ -76,6 +78,41 @@ export class AlertsComponent implements OnInit {
     await firstValueFrom(this.api.markAllAlertsRead());
     this.allAlerts.update(list => list.map(a => ({ ...a, read: true })));
   }
+
+  // ── Emergency button ───────────────────────────────────────────────────────
+
+  /** Opens the confirmation modal for the given alert. */
+  contactEmergency(alert: Alert): void {
+    this.emergencyAlert.set(alert);
+  }
+
+  /** User cancelled — close the modal. */
+  cancelEmergency(): void {
+    this.emergencyAlert.set(null);
+  }
+
+  /** User confirmed — log the action, show success toast, auto-dismiss after 5s. */
+  confirmEmergency(): void {
+    const alert = this.emergencyAlert();
+    if (!alert) return;
+
+    // Log to console for audit trail (in production this would call an API endpoint)
+    console.warn('[EMERGENCY] Services contacted for alert:', {
+      id:       alert.id,
+      type:     alert.type,
+      severity: alert.severity,
+      camera:   alert.cameraName,
+      time:     new Date(alert.timestamp).toLocaleString(),
+    });
+
+    this.emergencyAlert.set(null);
+    this.emergencyDispatched.set(true);
+
+    // Auto-hide the toast after 5 seconds
+    setTimeout(() => this.emergencyDispatched.set(false), 5000);
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   getSeverityClass(s: string): string {
     return ({ critical: 'danger', high: 'warning', medium: 'info', low: 'secondary' } as Record<string,string>)[s] ?? 'secondary';

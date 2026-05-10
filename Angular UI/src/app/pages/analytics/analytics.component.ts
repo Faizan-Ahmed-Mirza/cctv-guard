@@ -24,7 +24,11 @@ export class AnalyticsComponent implements OnInit {
   loading       = signal(true);
   exporting     = signal(false);
 
-  readonly years  = [2024, 2025];
+  readonly years  = (() => {
+    const current = new Date().getFullYear();
+    // Show last 3 years + current year dynamically
+    return [current - 2, current - 1, current];
+  })();
   readonly months = [
     { value: 0, label: 'All Months' },
     { value: 1, label: 'January' }, { value: 2, label: 'February' },
@@ -76,7 +80,10 @@ export class AnalyticsComponent implements OnInit {
   });
 
   cameraDetectionStats = computed(() => this.cameraDetections());
-  topCamera = computed(() => [...this.cameraDetections()].sort((a, b) => b.totalDetections - a.totalDetections)[0]);
+  topCamera = computed(() => {
+    const sorted = [...this.cameraDetections()].sort((a, b) => b.totalDetections - a.totalDetections);
+    return sorted[0] ?? null;
+  });
 
   monthlyAlertStats = computed(() => {
     let stats = this.monthlyAlerts();

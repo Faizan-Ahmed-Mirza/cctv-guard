@@ -29,3 +29,7 @@ Thumbs.db
 # ── Test/debug files ──────────────────────────────────────────────────────────
 stream-test.html
 DotNet Backend/CCTV-Guard/ffmpeg_test.txt
+# ignore these files
+*.pt
+*.pkl
+hashgen/

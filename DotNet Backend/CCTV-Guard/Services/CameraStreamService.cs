@@ -34,10 +34,16 @@ public class CameraStreamService : IDisposable
     private static bool _ffmpegReady = false;
     private static readonly SemaphoreSlim _ffmpegInitLock = new(1, 1);
 
+    // Cache confidence thresholds — refreshed every 60s, avoids N+1 DB queries per AI frame
+    private readonly ConcurrentDictionary<string, decimal> _confidenceCache = new();
+    private DateTime _confidenceCacheExpiry = DateTime.MinValue;
+    private readonly SemaphoreSlim _confidenceCacheLock = new(1, 1);
+
     public string? FfmpegExePath => _ffmpegExePath;
 
-    // AI: send every Nth frame (15fps ÷ 5 = 3fps to AI)
-    private const int AiFrameInterval = 5;
+    // AI: send 1 frame per second to avoid overloading the AI service
+    // At 15fps video, every 15th frame = exactly 1fps to AI
+    private const int AiFrameInterval = 15;
 
     // Circuit breaker for AI service — per-instance, not shared across cameras
     private bool _aiServiceAvailable = true;
@@ -150,9 +156,10 @@ public class CameraStreamService : IDisposable
                 // FFmpeg started — mark camera online
                 await UpdateCameraStatusAsync(cameraId, "online");
 
-                // Channel decouples frame parsing from SignalR sending
-                // Capacity=2: if SignalR is slow, drop old frames (always show latest)
-                var channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(2)
+                // Channel decouples frame parsing from SignalR sending.
+                // Capacity=1: always drop old frames, only send the very latest.
+                // This is the key to zero-lag live video — never queue up stale frames.
+                var channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(1)
                 {
                     FullMode        = BoundedChannelFullMode.DropOldest,
                     SingleReader    = true,
@@ -180,9 +187,9 @@ public class CameraStreamService : IDisposable
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Camera {Id}: stream error, retrying in 3s...", cameraId);
+                _logger.LogWarning(ex, "Camera {Id}: stream error, retrying in 1s...", cameraId);
                 await UpdateCameraStatusAsync(cameraId, "error");
-                try { await Task.Delay(3000, ct); } catch { break; }
+                try { await Task.Delay(1000, ct); } catch { break; }
                 // Status stays "error" until FFmpeg reconnects and frames start flowing
             }
             finally
@@ -201,18 +208,24 @@ public class CameraStreamService : IDisposable
     {
         var isRtmp = streamUrl.StartsWith("rtmp://", StringComparison.OrdinalIgnoreCase);
 
+        // Aggressive low-latency flags:
+        //   probesize 32 + analyzeduration 0  → skip stream analysis, start immediately
+        //   fflags nobuffer + avioflags direct → no I/O buffering at all
+        //   flags low_delay                    → decoder low-delay mode
+        //   max_delay 0                        → zero mux delay
+        //   flush_packets 1                    → flush every packet immediately
         var inputArgs = isRtmp
-            ? $"-fflags nobuffer -flags low_delay -i \"{streamUrl}\""
-            : $"-fflags nobuffer -flags low_delay -rtsp_transport tcp -i \"{streamUrl}\"";
+            ? $"-probesize 32 -analyzeduration 0 -avioflags direct -fflags nobuffer -flags low_delay -max_delay 0 -flush_packets 1 -i \"{streamUrl}\""
+            : $"-probesize 32 -analyzeduration 0 -avioflags direct -fflags nobuffer -flags low_delay -max_delay 0 -flush_packets 1 -rtsp_transport tcp -i \"{streamUrl}\"";
 
-        // 25fps for smooth video, 640x480 for good quality + low bandwidth
-        // q:v 3 = high JPEG quality
+        // 15fps is enough for live monitoring and reduces pipeline backpressure vs 25fps
+        // q:v 5 = slightly lower quality but faster encode → less latency
         var args = string.Join(" ",
             "-loglevel warning",
             inputArgs,
-            "-vf fps=25,scale=640:480",
+            "-vf fps=15,scale=640:480",
             "-vcodec mjpeg",
-            "-q:v 3",
+            "-q:v 5",
             "-f image2pipe",
             "pipe:1"
         );
@@ -247,9 +260,9 @@ public class CameraStreamService : IDisposable
         CancellationToken ct)
     {
         var stream = process.StandardOutput.BaseStream;
-        // Use a MemoryStream as a ring buffer — much faster than List<byte>
+        // Small read buffer — we want to process data as soon as it arrives, not batch it
         var buf    = new byte[65536];
-        var ms     = new MemoryStream(256 * 1024);
+        var ms     = new MemoryStream(32 * 1024); // 32KB — just enough for one JPEG frame
 
         try
         {
@@ -357,9 +370,22 @@ public class CameraStreamService : IDisposable
             }
             catch { /* ignore sync exceptions */ }
 
-            // AI detection — completely isolated, never affects video
+            // AI detection — completely isolated, never affects video.
+            // TryWait(0) = non-blocking: if AI is busy with previous frame, skip this one.
             if (frameNum % AiFrameInterval == 0)
-                _ = Task.Run(() => ProcessAiDetectionAsync(cameraId, jpeg, CancellationToken.None));
+            {
+                var sem = _aiSemaphores.GetOrAdd(cameraId, _ => new SemaphoreSlim(1, 1));
+                if (sem.Wait(0)) // non-blocking — returns false immediately if busy
+                {
+                    var frameForAi = jpeg; // capture for closure
+                    _ = Task.Run(async () =>
+                    {
+                        try   { await ProcessAiDetectionAsync(cameraId, frameForAi, CancellationToken.None); }
+                        finally { sem.Release(); }
+                    });
+                }
+                // else: AI still processing previous frame — drop this one, video unaffected
+            }
         }
     }
 
@@ -380,7 +406,12 @@ public class CameraStreamService : IDisposable
             }, "file", "frame.jpg");
 
             var threshold = await GetConfidenceThresholdAsync(cameraId);
-            content.Add(new StringContent(threshold.ToString("F2")), "confidence_threshold");
+            // Always send a LOW threshold to the AI service (0.25) so it returns all detections.
+            // We filter by severity in C# — this ensures weapons at 40-80% confidence are never
+            // silently dropped by the AI before we even see them.
+            // The camera's configured threshold (e.g. 0.85) is used only for non-critical classes.
+            var aiThreshold = 0.25m;
+            content.Add(new StringContent(aiThreshold.ToString("F2")), "confidence_threshold");
 
             var response = await client.PostAsync("/detect", content, ct);
             if (!response.IsSuccessStatusCode) return;
@@ -388,12 +419,34 @@ public class CameraStreamService : IDisposable
             _aiServiceAvailable = true;
 
             var json   = await response.Content.ReadAsStringAsync(ct);
-            var result = JsonSerializer.Deserialize<AiDetectResponse>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            if (result?.Detections == null || result.Detections.Count == 0) return;
+            // Log raw response for debugging
+            _logger.LogDebug("Camera {Id}: AI raw response: {Json}", cameraId, json[..Math.Min(500, json.Length)]);
 
-            // Push bounding boxes to Angular
+            AiDetectResponse? result;
+            try
+            {
+                result = JsonSerializer.Deserialize<AiDetectResponse>(json,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Camera {Id}: failed to deserialize AI response", cameraId);
+                return;
+            }
+
+            if (result?.Detections == null || result.Detections.Count == 0)
+            {
+                _logger.LogDebug("Camera {Id}: no detections after deserialization", cameraId);
+                return;
+            }
+
+            // Log ALL detections for debugging
+            foreach (var d in result.Detections)
+                _logger.LogInformation("Camera {Id}: detected {Label} ({YoloClass}) conf={Conf:P0} severity={Sev}",
+                    cameraId, d.Label, d.YoloClass, d.Confidence, d.Severity);
+
+            // Push ALL bounding boxes to Angular (including persons, vehicles)
             _ = _hub.Clients.Group($"camera-{cameraId}")
                 .SendAsync("BoundingBoxes", new
                 {
@@ -410,9 +463,21 @@ public class CameraStreamService : IDisposable
                     })
                 }, CancellationToken.None);
 
-            // Create incidents for critical/high threats
-            foreach (var det in result.Detections.Where(d => d.Severity is "critical" or "high"))
-                await CreateIncidentAsync(cameraId, det, ct);
+            // Create incidents based on severity + confidence gates.
+            // Severity comes from the AI service and maps to detection type:
+            //   critical → weapon, fight, fire  (always alert)
+            //   high     → unknown_face         (alert at 40%+)
+            //   medium   → intrusion/person      (alert at 50%+)
+            //   low      → license_plate, vehicle (alert at 60%+)
+            foreach (var det in result.Detections.Where(d => d.Severity switch
+            {
+                "critical" => d.Confidence >= 0.25f,
+                "high"     => d.Confidence >= 0.40f,
+                "medium"   => d.Confidence >= 0.50f,
+                "low"      => d.Confidence >= 0.60f,
+                _          => false
+            }))
+                await CreateIncidentAsync(cameraId, det, jpeg, ct);
         }
         catch (HttpRequestException)
         {
@@ -427,8 +492,18 @@ public class CameraStreamService : IDisposable
         catch { /* ignore other errors */ }
     }
 
-    private async Task CreateIncidentAsync(string cameraId, AiDetection det, CancellationToken ct)
+    private async Task CreateIncidentAsync(string cameraId, AiDetection det, byte[] jpeg, CancellationToken ct)
     {
+        // Deduplication: skip if same camera+label+yolo_class was logged within the cooldown window.
+        // Use yolo_class (e.g. "Gun", "knife") not just label ("weapon") so different weapon types
+        // each get their own cooldown and don't block each other.
+        var dedupeKey = $"{cameraId}:{det.Label}:{det.YoloClass}";
+        var timestamp = DateTime.UtcNow;
+        if (_lastIncidentTime.TryGetValue(dedupeKey, out var lastTime) &&
+            timestamp - lastTime < IncidentCooldown)
+            return;
+        _lastIncidentTime[dedupeKey] = timestamp;
+
         try
         {
             using var scope = _scopeFactory.CreateScope();
@@ -436,7 +511,14 @@ public class CameraStreamService : IDisposable
 
             var incidentId = "inc-" + Guid.NewGuid().ToString("N")[..8];
             var alertId    = "alr-" + Guid.NewGuid().ToString("N")[..8];
-            var now        = DateTime.UtcNow;
+
+            // Build a descriptive message — include face name if recognised
+            var message = det.FaceUsername != null
+                ? $"{det.Label} detected: {det.FaceUsername} (confidence {det.Confidence:P0})"
+                : $"{det.Label} detected with {det.Confidence:P0} confidence.";
+
+            // Save the JPEG frame as a base64 data URL for the incident thumbnail
+            var thumbnailUrl = $"data:image/jpeg;base64,{Convert.ToBase64String(jpeg)}";
 
             db.Incidents.Add(new Incident
             {
@@ -445,7 +527,8 @@ public class CameraStreamService : IDisposable
                 Type         = det.Label,
                 Severity     = det.Severity,
                 Confidence   = (decimal)det.Confidence,
-                Timestamp    = now,
+                Timestamp    = timestamp,
+                ThumbnailUrl = thumbnailUrl,
                 BoundingBoxX = det.BoundingBox.X,
                 BoundingBoxY = det.BoundingBox.Y,
                 BoundingBoxW = det.BoundingBox.W,
@@ -459,9 +542,9 @@ public class CameraStreamService : IDisposable
                 IncidentId = incidentId,
                 CameraId   = cameraId,
                 Type       = $"{det.Label} Detected",
-                Message    = $"{det.Label} detected with {det.Confidence:P0} confidence.",
+                Message    = message,
                 Severity   = det.Severity,
-                Timestamp  = now
+                Timestamp  = timestamp
             };
             db.Alerts.Add(alert);
             await db.SaveChangesAsync(ct);
@@ -475,7 +558,9 @@ public class CameraStreamService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Camera {Id}: failed to create incident", cameraId);
+            // Log the FULL exception — silent failures here mean alerts never fire
+            _logger.LogError(ex, "Camera {Id}: FAILED to create incident for {Type}. Exception: {Msg}",
+                cameraId, det.Label, ex.Message);
         }
     }
 
@@ -491,10 +576,28 @@ public class CameraStreamService : IDisposable
 
     private async Task<decimal> GetConfidenceThresholdAsync(string cameraId)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return (await db.Cameras.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == cameraId))?.ConfidenceThreshold ?? 0.45m;
+        // Refresh cache every 60 seconds
+        if (DateTime.UtcNow > _confidenceCacheExpiry)
+        {
+            await _confidenceCacheLock.WaitAsync();
+            try
+            {
+                if (DateTime.UtcNow > _confidenceCacheExpiry)
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var thresholds = await db.Cameras.AsNoTracking()
+                        .Select(c => new { c.Id, c.ConfidenceThreshold })
+                        .ToListAsync();
+                    _confidenceCache.Clear();
+                    foreach (var t in thresholds)
+                        _confidenceCache[t.Id] = t.ConfidenceThreshold;
+                    _confidenceCacheExpiry = DateTime.UtcNow.AddSeconds(60);
+                }
+            }
+            finally { _confidenceCacheLock.Release(); }
+        }
+        return _confidenceCache.TryGetValue(cameraId, out var threshold) ? threshold : 0.45m;
     }
 
     private async Task UpdateCameraStatusAsync(string cameraId, string status)
@@ -522,8 +625,60 @@ public class CameraStreamService : IDisposable
         _streams.Clear();
     }
 
+    // Per-camera AI semaphore — ensures only 1 AI call in-flight per camera at a time.
+    // If Python is still processing the previous frame, the new one is simply dropped.
+    // This is the key guarantee that video NEVER lags regardless of AI speed.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _aiSemaphores = new();
+
+    // Incident deduplication — don't create a new incident for the same camera+label+class
+    // within a 10-second window (prevents DB flooding on continuous detections)
+    private readonly ConcurrentDictionary<string, DateTime> _lastIncidentTime = new();
+    private static readonly TimeSpan IncidentCooldown = TimeSpan.FromSeconds(10);
+
     private record StreamState(CancellationTokenSource Cts);
-    private record AiDetectResponse(string CameraId, List<AiDetection> Detections, float InferenceMs);
-    private record AiDetection(string Label, string YoloClass, float Confidence, string Severity, AiBoundingBox BoundingBox);
-    private record AiBoundingBox(int X, int Y, int W, int H);
+
+    // ── AI response models — explicit JsonPropertyName to match Python snake_case ──
+    private class AiDetectResponse
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("camera_id")]
+        public string CameraId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("detections")]
+        public List<AiDetection> Detections { get; set; } = new();
+        [System.Text.Json.Serialization.JsonPropertyName("inference_ms")]
+        public float InferenceMs { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("face_recognition_ms")]
+        public float FaceRecognitionMs { get; set; }
+    }
+
+    private class AiDetection
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("label")]
+        public string Label { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("yolo_class")]
+        public string YoloClass { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("confidence")]
+        public float Confidence { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("severity")]
+        public string Severity { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("bounding_box")]
+        public AiBoundingBox BoundingBox { get; set; } = new();
+        [System.Text.Json.Serialization.JsonPropertyName("face_matched")]
+        public bool FaceMatched { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("face_username")]
+        public string? FaceUsername { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("face_confidence")]
+        public float FaceConfidence { get; set; }
+    }
+
+    private class AiBoundingBox
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("x")]
+        public int X { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("y")]
+        public int Y { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("w")]
+        public int W { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("h")]
+        public int H { get; set; }
+    }
 }

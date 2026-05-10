@@ -34,7 +34,7 @@ public class AlertService
                 Message = a.Message,
                 CameraName = a.Camera?.Name ?? string.Empty,
                 Severity = a.Severity,
-                Timestamp = a.Timestamp,
+                Timestamp = new DateTimeOffset(DateTime.SpecifyKind(a.Timestamp, DateTimeKind.Utc)),
                 Read = rs?.IsRead ?? false,
                 Dismissed = rs?.IsDismissed ?? false
             };

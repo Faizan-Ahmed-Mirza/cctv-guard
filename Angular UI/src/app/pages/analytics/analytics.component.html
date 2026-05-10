@@ -12,7 +12,7 @@
         <label>Year</label>
         <select class="form-control form-control-sm"
                 [ngModel]="selectedYear()"
-                (ngModelChange)="selectedYear.set(+$event)">
+                (ngModelChange)="onYearChange(+$event)">
           @for (y of years; track y) {
             <option [value]="y">{{ y }}</option>
           }
@@ -153,9 +153,9 @@
             @for (cam of cameraDetectionStats(); track cam.cameraId) {
               <div class="hbar-row">
                 <div class="hbar-label">
-                  <span class="cam-dot" [class.top]="cam.cameraId === topCamera()!.cameraId">📹</span>
+                  <span class="cam-dot" [class.top]="topCamera() && cam.cameraId === topCamera()!.cameraId">📹</span>
                   <span class="hbar-name">{{ cam.cameraName }}</span>
-                  @if (cam.cameraId === topCamera()!.cameraId) {
+                  @if (topCamera() && cam.cameraId === topCamera()!.cameraId) {
                     <span class="badge badge-warning top-badge">Top</span>
                   }
                 </div>
@@ -387,17 +387,22 @@
             <div class="hl-stat"><span class="hl-num blue">{{ topCamera()!.unknownFaceCount }}</span><span>Unknown Faces</span></div>
           </div>
         </div>
+      } @else {
+        <div class="empty-state-banner">
+          <span>📹</span>
+          <p>No detection data yet. Incidents will appear here once cameras start detecting events.</p>
+        </div>
       }
 
       <!-- Camera detection cards grid -->
       <div class="camera-cards-grid">
         @for (cam of cameraDetectionStats(); track cam.cameraId) {
-          <div class="camera-det-card" [class.top-cam]="cam.cameraId === topCamera()!.cameraId">
+          <div class="camera-det-card" [class.top-cam]="topCamera() && cam.cameraId === topCamera()!.cameraId">
             <div class="cam-det-header">
               <div class="cam-det-name">
                 <span class="cam-icon">📹</span>
                 <span>{{ cam.cameraName }}</span>
-                @if (cam.cameraId === topCamera()!.cameraId) {
+                @if (topCamera() && cam.cameraId === topCamera()!.cameraId) {
                   <span class="badge badge-warning">🏆 Top</span>
                 }
               </div>
@@ -447,12 +452,12 @@
             </thead>
             <tbody>
               @for (cam of cameraDetectionStats(); track cam.cameraId) {
-                <tr [class.highlight-row]="cam.cameraId === topCamera()!.cameraId">
+                <tr [class.highlight-row]="topCamera() && cam.cameraId === topCamera()!.cameraId">
                   <td>
                     <div class="user-cell">
                       <span>📹</span>
                       <span>{{ cam.cameraName }}</span>
-                      @if (cam.cameraId === topCamera()!.cameraId) {
+                      @if (topCamera() && cam.cameraId === topCamera()!.cameraId) {
                         <span class="badge badge-warning">Top</span>
                       }
                     </div>
@@ -497,20 +502,27 @@
           </div>
 
           <div class="bar-chart-vertical">
-            @for (stat of monthlyAlertStats(); track stat.month) {
-              <div class="bar-col">
-                <div class="bar-value-label">{{ stat.total }}</div>
-                <div class="bar-stack-wrap">
-                  <div class="bar-stack" [style.height.%]="getBarWidth(stat.total, getMaxMonthlyAlerts())">
-                    @for (seg of getMonthlyAlertBarSegments(stat); track seg.color) {
-                      @if (seg.pct > 0) {
-                        <div class="bar-segment" [style.background]="seg.color" [style.flex]="seg.pct"></div>
-                      }
-                    }
-                  </div>
-                </div>
-                <div class="bar-label">{{ stat.label.split(' ')[0] }}</div>
+            @if (monthlyAlertStats().length === 0 || monthlyAlertStats().every(s => s.total === 0)) {
+              <div class="chart-empty">
+                <span>🔔</span>
+                <p>No alerts recorded for {{ selectedYear() }}. Alerts appear here once threats are detected.</p>
               </div>
+            } @else {
+              @for (stat of monthlyAlertStats(); track stat.month) {
+                <div class="bar-col">
+                  <div class="bar-value-label">{{ stat.total > 0 ? stat.total : '' }}</div>
+                  <div class="bar-stack-wrap">
+                    <div class="bar-stack" [style.height.%]="getBarWidth(stat.total, getMaxMonthlyAlerts())">
+                      @for (seg of getMonthlyAlertBarSegments(stat); track seg.color) {
+                        @if (seg.pct > 0) {
+                          <div class="bar-segment" [style.background]="seg.color" [style.flex]="seg.pct"></div>
+                        }
+                      }
+                    </div>
+                  </div>
+                  <div class="bar-label">{{ stat.label.split(' ')[0] }}</div>
+                </div>
+              }
             }
           </div>
         </div>

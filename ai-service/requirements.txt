@@ -3,9 +3,16 @@ fastapi==0.115.5
 uvicorn[standard]==0.32.1
 python-multipart==0.0.12
 
-# ── AI / Computer Vision (install after smoke-test passes) ────────────────────
-ultralytics==8.3.40
+# ── AI / Computer Vision ───────────────────────────────────────────────────────
+ultralytics==8.3.40          # YOLOv8 COCO + Pose models
 opencv-python-headless==4.10.0.84
-Pillow==11.0.0
+Pillow>=11.0.0
 numpy==1.26.4
+
+# ── License Plate OCR ─────────────────────────────────────────────────────────
+easyocr                      # reads license plate text from vehicle crops
+
+# ── Face Recognition ───────────────────────────────────────────────────────────
 deepface==0.0.93
+tf-keras==2.16.0
+tensorflow-cpu==2.16.1

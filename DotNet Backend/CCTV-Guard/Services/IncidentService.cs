@@ -78,7 +78,10 @@ public class IncidentService
         Type = i.Type,
         Severity = i.Severity,
         Confidence = i.Confidence,
-        Timestamp = i.Timestamp,
+        // Explicitly mark as UTC so JSON serialiser emits "+00:00" suffix.
+        // Without this, DateTime without Kind serialises without timezone info
+        // and Angular treats it as local time (5h behind for PKT UTC+5).
+        Timestamp = new DateTimeOffset(DateTime.SpecifyKind(i.Timestamp, DateTimeKind.Utc)),
         ThumbnailUrl = i.ThumbnailUrl,
         BoundingBox = (i.BoundingBoxX.HasValue) ? new BoundingBoxDto
         {
@@ -90,8 +93,12 @@ public class IncidentService
         Status = i.Status,
         Notes = i.Notes,
         AcknowledgedBy = i.AcknowledgedBy,
-        AcknowledgedAt = i.AcknowledgedAt,
+        AcknowledgedAt = i.AcknowledgedAt.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(i.AcknowledgedAt.Value, DateTimeKind.Utc))
+            : null,
         ResolvedBy = i.ResolvedBy,
-        ResolvedAt = i.ResolvedAt
+        ResolvedAt = i.ResolvedAt.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(i.ResolvedAt.Value, DateTimeKind.Utc))
+            : null,
     };
 }

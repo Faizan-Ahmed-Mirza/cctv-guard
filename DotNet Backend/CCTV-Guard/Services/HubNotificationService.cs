@@ -28,7 +28,7 @@ public class HubNotificationService
             Message    = alert.Message,
             CameraName = cameraName,
             Severity   = alert.Severity,
-            Timestamp  = alert.Timestamp,
+            Timestamp  = new DateTimeOffset(DateTime.SpecifyKind(alert.Timestamp, DateTimeKind.Utc)),
             Read       = false,
             Dismissed  = false
         });

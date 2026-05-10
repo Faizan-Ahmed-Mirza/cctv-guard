@@ -8,15 +8,17 @@ public class IncidentDto
     public string Type { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
     public decimal Confidence { get; set; }
-    public DateTime Timestamp { get; set; }
+    // DateTimeOffset always serialises with timezone offset (e.g. "2025-05-09T08:00:00+00:00")
+    // so Angular's new Date() correctly converts to local time instead of treating it as local.
+    public DateTimeOffset Timestamp { get; set; }
     public string? ThumbnailUrl { get; set; }
     public BoundingBoxDto? BoundingBox { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? Notes { get; set; }
     public Guid? AcknowledgedBy { get; set; }
-    public DateTime? AcknowledgedAt { get; set; }
+    public DateTimeOffset? AcknowledgedAt { get; set; }
     public Guid? ResolvedBy { get; set; }
-    public DateTime? ResolvedAt { get; set; }
+    public DateTimeOffset? ResolvedAt { get; set; }
 }
 
 public class BoundingBoxDto

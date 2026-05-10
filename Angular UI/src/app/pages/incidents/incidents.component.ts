@@ -70,6 +70,11 @@ export class IncidentsComponent implements OnInit {
   viewDetails(inc: Incident): void { this.selectedIncident.set(inc); }
   closeModal(): void               { this.selectedIncident.set(null); }
 
+  // Scale factor: the thumbnail is displayed at 100% CSS width inside a ~480px container.
+  // The original frame is 640px wide → scale = 480/640 = 0.75
+  // Used to position the bounding box overlay on the thumbnail image.
+  readonly thumbScale = 0.75;
+
   exportToExcel(): void {
     const rows = this.filteredIncidents();
     if (rows.length === 0) return;

@@ -36,6 +36,7 @@ public class CameraStreamHub : Hub
     /// Called by Angular when it opens a camera feed.
     /// Adds the connection to the camera's SignalR group and starts
     /// FFmpeg if not already running.
+    /// FFmpeg is started immediately so the first frame arrives as fast as possible.
     /// </summary>
     public async Task JoinCamera(string cameraId)
     {
@@ -58,9 +59,9 @@ public class CameraStreamHub : Hub
         if (!alreadyJoined)
             _cameraViewers.AddOrUpdate(cameraId, 1, (_, count) => count + 1);
 
-        // Start stream if not already running
-        if (!_streamService.IsStreaming(cameraId))
-            await _streamService.StartAsync(cameraId);
+        // Start FFmpeg immediately — don't wait, so the client gets frames ASAP
+        // Fire-and-forget: if already streaming this is a no-op
+        _ = Task.Run(() => _streamService.StartAsync(cameraId));
     }
 
     /// <summary>
@@ -96,12 +97,19 @@ public class CameraStreamHub : Hub
             0,
             (_, count) => Math.Max(0, count - 1));
 
-        // Stop FFmpeg when nobody is watching — saves CPU and bandwidth
+        // Only stop FFmpeg when nobody is watching AND after a grace period.
+        // 5s is enough to survive page navigation without restarting the stream.
         if (newCount == 0)
         {
             _cameraViewers.TryRemove(cameraId, out _);
-            if (_streamService.IsStreaming(cameraId))
-                await _streamService.StopAsync(cameraId);
+
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5));
+                // Re-check: only stop if still no viewers after the grace period
+                if (!_cameraViewers.ContainsKey(cameraId) && _streamService.IsStreaming(cameraId))
+                    await _streamService.StopAsync(cameraId);
+            });
         }
     }
 }

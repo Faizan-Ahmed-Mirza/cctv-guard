@@ -1,27 +1,36 @@
 """
-CCTV Guard — AI Microserver
-FastAPI service that accepts JPEG frames and returns YOLOv8 detections + FaceNet identity checks.
+CCTV Guard — AI Microservice v4.0
+Multi-model detection pipeline:
+
+  Model 1: yolov8n.pt        — COCO: persons, vehicles, knives, scissors
+  Model 2: yolov8n-pose.pt   — Pose estimation for fight detection
+  Model 3: weapon_model.pt   — Generic weapon detector (148MB)
+  Model 4: threat_model.pt   — Specific threats: Gun, grenade, knife, explosion (6MB)
+  Model 5: fire_model.pt     — Fire/smoke detection (optional)
+  OCR:     EasyOCR           — License plate text extraction
+  Face:    DeepFace/FaceNet  — Identity verification
 
 Endpoints:
-  GET  /health          — service status and loaded model info
-  POST /detect          — run YOLOv8 on a frame, returns bounding boxes
-  POST /identify        — run FaceNet identity check on a cropped face region
-  POST /register-face   — register a known person's face embedding
+  GET  /health
+  POST /detect
+  POST /register-face
+  GET  /faces
+  DELETE /faces/{username}
 """
 
 import base64
-import io
 import logging
 import os
+import pickle
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
 from pydantic import BaseModel
 from ultralytics import YOLO
 
@@ -29,197 +38,577 @@ from ultralytics import YOLO
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# ── Paths ──────────────────────────────────────────────────────────────────────
+BASE_DIR        = Path(__file__).parent
+FACES_DB_PATH   = BASE_DIR / "faces_db.pkl"
+COCO_MODEL      = BASE_DIR / "yolov8n.pt"
+POSE_MODEL      = BASE_DIR / "yolov8n-pose.pt"
+WEAPON_MODEL    = BASE_DIR / "weapon_model.pt"   # generic weapon detector (148MB)
+THREAT_MODEL    = BASE_DIR / "threat_model.pt"   # Gun/grenade/knife/explosion (6MB)
+FIRE_MODEL      = BASE_DIR / "fire_model.pt"     # optional fire/smoke model
+
 # ── Model globals ──────────────────────────────────────────────────────────────
-yolo_model: Optional[YOLO] = None
-known_faces: dict[str, np.ndarray] = {}   # username → face embedding
+coco_model:   Optional[YOLO] = None   # persons, vehicles, COCO weapons
+pose_model:   Optional[YOLO] = None   # fight detection via pose
+weapon_model: Optional[YOLO] = None   # generic weapon detector
+threat_model: Optional[YOLO] = None   # Gun, grenade, knife, explosion
+fire_model:   Optional[YOLO] = None   # fire/smoke detection
+ocr_reader = None                     # EasyOCR for license plates
+known_faces: dict[str, np.ndarray] = {}
 
-# ── Label mapping: YOLO class → our incident type ─────────────────────────────
-# YOLOv8n is trained on COCO — we map relevant classes.
-# For production, swap with a custom-trained model for fight/weapon detection.
-LABEL_MAP = {
-    "person":     "person",
-    "knife":      "weapon",
-    "scissors":   "weapon",
-    "gun":        "weapon",
-    "pistol":     "weapon",
-    "rifle":      "weapon",
-    "fire":       "intrusion",
-    "smoke":      "intrusion",
-    "car":        "license_plate",
-    "truck":      "license_plate",
-    "motorcycle": "license_plate",
-    "bus":        "license_plate",
-}
+# ── COCO weapon/vehicle classes ────────────────────────────────────────────────
+WEAPON_CLASSES   = {"knife", "scissors", "baseball bat"}
+VEHICLE_CLASSES  = {"car", "truck", "motorcycle", "bus", "bicycle"}
 
-# Severity mapping by incident type
+# Threat model class names that map to weapon severity
+THREAT_WEAPON_CLASSES = {"gun", "grenade", "knife", "weapon", "pistol", "rifle",
+                         "blade", "sword", "dagger", "machete", "handgun"}
+
+# ── Severity map ───────────────────────────────────────────────────────────────
 SEVERITY_MAP = {
     "weapon":        "critical",
     "fight":         "critical",
+    "fire":          "critical",
     "unknown_face":  "high",
     "intrusion":     "medium",
     "license_plate": "low",
     "person":        "low",
 }
 
+# ── Fight detection thresholds (pose-based) ────────────────────────────────────
+# Keypoint indices (COCO pose): 0=nose, 5=L-shoulder, 6=R-shoulder,
+# 7=L-elbow, 8=R-elbow, 9=L-wrist, 10=R-wrist, 11=L-hip, 12=R-hip
+FIGHT_WRIST_SPEED_THRESHOLD = 0.15   # normalized wrist movement
+FIGHT_OVERLAP_IOU_THRESHOLD = 0.15   # bounding box overlap between persons
 
-# ── Startup / shutdown ─────────────────────────────────────────────────────────
+# Track previous pose keypoints per camera for motion analysis
+_prev_poses: dict[str, list] = {}
+
+
+# ── Face DB ────────────────────────────────────────────────────────────────────
+
+def load_faces_db() -> dict[str, np.ndarray]:
+    if FACES_DB_PATH.exists():
+        try:
+            with open(FACES_DB_PATH, "rb") as f:
+                data = pickle.load(f)
+            logger.info("Loaded %d face(s) from faces_db.pkl", len(data))
+            return data
+        except Exception as e:
+            logger.warning("Failed to load faces_db.pkl: %s", e)
+    return {}
+
+def save_faces_db() -> None:
+    try:
+        with open(FACES_DB_PATH, "wb") as f:
+            pickle.dump(known_faces, f)
+    except Exception as e:
+        logger.error("Failed to save faces_db.pkl: %s", e)
+
+
+# ── Image helpers ──────────────────────────────────────────────────────────────
+
+def bytes_to_cv2(data: bytes) -> np.ndarray:
+    arr = np.frombuffer(data, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Failed to decode image.")
+    return img
+
+def base64_to_cv2(b64: str) -> np.ndarray:
+    return bytes_to_cv2(base64.b64decode(b64))
+
+
+# ── Face recognition ───────────────────────────────────────────────────────────
+
+def get_face_embedding(img_bgr: np.ndarray) -> Optional[np.ndarray]:
+    try:
+        from deepface import DeepFace
+        result = DeepFace.represent(
+            img_path=img_bgr,
+            model_name="Facenet",
+            enforce_detection=False,
+            detector_backend="opencv",
+        )
+        if result:
+            return np.array(result[0]["embedding"])
+    except Exception as e:
+        logger.debug("Face embedding failed: %s", e)
+    return None
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    norm = np.linalg.norm(a) * np.linalg.norm(b)
+    return float(np.dot(a, b) / norm) if norm > 0 else 0.0
+
+def identify_face(img_bgr: np.ndarray, threshold: float = 0.6):
+    if not known_faces:
+        return False, None, 0.0
+    embedding = get_face_embedding(img_bgr)
+    if embedding is None:
+        return False, None, 0.0
+    best_name, best_score = None, 0.0
+    for username, known_emb in known_faces.items():
+        score = cosine_similarity(embedding, known_emb)
+        if score > best_score:
+            best_score, best_name = score, username
+    matched = best_score >= threshold
+    return matched, (best_name if matched else None), round(best_score, 4)
+
+
+# ── Fight detection (pose-based) ───────────────────────────────────────────────
+
+def bbox_iou(b1, b2) -> float:
+    """Compute IoU between two bounding boxes [x1,y1,x2,y2]."""
+    ix1 = max(b1[0], b2[0]); iy1 = max(b1[1], b2[1])
+    ix2 = min(b1[2], b2[2]); iy2 = min(b1[3], b2[3])
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    if inter == 0:
+        return 0.0
+    a1 = (b1[2]-b1[0]) * (b1[3]-b1[1])
+    a2 = (b2[2]-b2[0]) * (b2[3]-b2[1])
+    return inter / (a1 + a2 - inter)
+
+def detect_fight(camera_id: str, img: np.ndarray) -> list[dict]:
+    """
+    Detect fights using YOLOv8 pose estimation.
+    Strategy:
+      1. Detect all persons and their keypoints
+      2. Check if 2+ persons have overlapping bounding boxes (proximity)
+      3. Check if wrist keypoints are moving rapidly (aggression)
+      4. If both conditions met → flag as fight
+    """
+    if pose_model is None:
+        return []
+
+    h, w = img.shape[:2]
+    results = pose_model(img, verbose=False)
+    fights = []
+
+    persons = []
+    for result in results:
+        if result.keypoints is None or result.boxes is None:
+            continue
+        for i, box in enumerate(result.boxes):
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            kpts = result.keypoints.xy[i].cpu().numpy()  # shape (17, 2)
+            conf = float(box.conf[0])
+            if conf < 0.4:
+                continue
+            persons.append({
+                "box": [x1, y1, x2, y2],
+                "kpts": kpts,
+                "conf": conf
+            })
+
+    if len(persons) < 2:
+        # Update pose history even with 1 person
+        _prev_poses[camera_id] = persons
+        return []
+
+    # Check proximity — any two persons overlapping
+    fight_detected = False
+    fight_boxes = []
+
+    for i in range(len(persons)):
+        for j in range(i + 1, len(persons)):
+            iou = bbox_iou(persons[i]["box"], persons[j]["box"])
+            if iou >= FIGHT_OVERLAP_IOU_THRESHOLD:
+                # Check wrist motion if we have previous frame data
+                rapid_motion = False
+                prev = _prev_poses.get(camera_id, [])
+                if len(prev) >= 2:
+                    # Compare wrist positions (indices 9=L-wrist, 10=R-wrist)
+                    for pi, pp in enumerate(prev[:2]):
+                        if pi < len(persons):
+                            curr_kpts = persons[pi]["kpts"]
+                            prev_kpts = pp["kpts"]
+                            for wrist_idx in [9, 10]:
+                                if wrist_idx < len(curr_kpts) and wrist_idx < len(prev_kpts):
+                                    dx = (curr_kpts[wrist_idx][0] - prev_kpts[wrist_idx][0]) / w
+                                    dy = (curr_kpts[wrist_idx][1] - prev_kpts[wrist_idx][1]) / h
+                                    speed = (dx**2 + dy**2) ** 0.5
+                                    if speed > FIGHT_WRIST_SPEED_THRESHOLD:
+                                        rapid_motion = True
+                                        break
+                    if rapid_motion:
+                        fight_detected = True
+                        fight_boxes.append(persons[i]["box"])
+                        fight_boxes.append(persons[j]["box"])
+                else:
+                    # No previous frame — use proximity alone as weak signal
+                    # Only flag if boxes overlap significantly (IoU > 0.3)
+                    if iou > 0.30:
+                        fight_detected = True
+                        fight_boxes.append(persons[i]["box"])
+                        fight_boxes.append(persons[j]["box"])
+
+    _prev_poses[camera_id] = persons
+
+    if fight_detected and fight_boxes:
+        # Merge all fight boxes into one bounding box
+        all_x1 = min(b[0] for b in fight_boxes)
+        all_y1 = min(b[1] for b in fight_boxes)
+        all_x2 = max(b[2] for b in fight_boxes)
+        all_y2 = max(b[3] for b in fight_boxes)
+        fights.append({
+            "label": "fight",
+            "yolo_class": "fight",
+            "confidence": 0.75,
+            "severity": "critical",
+            "bounding_box": {"x": all_x1, "y": all_y1, "w": all_x2-all_x1, "h": all_y2-all_y1},
+            "face_matched": False, "face_username": None, "face_confidence": 0.0
+        })
+
+    return fights
+
+
+# ── Fire detection ─────────────────────────────────────────────────────────────
+
+def detect_fire(img: np.ndarray, confidence_threshold: float) -> list[dict]:
+    """
+    Detect fire/smoke using a dedicated fire model if available.
+    Color fallback is DISABLED — too many false positives with skin tone.
+    Only use a real fire model.
+    """
+    detections = []
+
+    if fire_model is not None:
+        results = fire_model(img, conf=confidence_threshold, verbose=False)
+        for result in results:
+            for box in result.boxes:
+                cls_name = result.names[int(box.cls[0])].lower()
+                if any(w in cls_name for w in ["fire", "flame", "smoke"]):
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    detections.append({
+                        "label": "fire",
+                        "yolo_class": cls_name,
+                        "confidence": round(float(box.conf[0]), 4),
+                        "severity": "critical",
+                        "bounding_box": {"x": x1, "y": y1, "w": x2-x1, "h": y2-y1},
+                        "face_matched": False, "face_username": None, "face_confidence": 0.0
+                    })
+
+    # Color-based fallback is intentionally disabled — skin tone causes false positives.
+    # To enable fire detection without a custom model, place fire_model.pt in ai-service/
+
+    return detections
+
+
+# ── License plate OCR ──────────────────────────────────────────────────────────
+
+def read_license_plate(img_bgr: np.ndarray) -> Optional[str]:
+    """Extract text from a license plate crop using EasyOCR."""
+    if ocr_reader is None:
+        return None
+    try:
+        results = ocr_reader.readtext(img_bgr, detail=0, paragraph=True)
+        text = " ".join(results).strip().upper()
+        # Filter: license plates are typically 4-10 alphanumeric chars
+        cleaned = "".join(c for c in text if c.isalnum() or c == " ").strip()
+        return cleaned if 3 <= len(cleaned.replace(" ", "")) <= 12 else None
+    except Exception:
+        return None
+
+
+# ── Startup ────────────────────────────────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global yolo_model
-    logger.info("Loading YOLOv8n model...")
-    yolo_model = YOLO("yolov8n.pt")   # auto-downloads on first run
-    logger.info("YOLOv8n model loaded successfully.")
+    global coco_model, pose_model, weapon_model, threat_model, fire_model, ocr_reader, known_faces
+
+    known_faces = load_faces_db()
+    dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    # ── Load COCO model ────────────────────────────────────────────────────────
+    logger.info("Loading COCO model (yolov8n)...")
+    try:
+        coco_model = YOLO(str(COCO_MODEL))
+        coco_model(dummy, verbose=False)
+        logger.info("✅ COCO model ready (persons, vehicles, knives)")
+    except Exception as e:
+        logger.error("❌ COCO model failed: %s", e)
+
+    # ── Load Weapon model (generic — 148MB) ────────────────────────────────────
+    if WEAPON_MODEL.exists():
+        logger.info("Loading weapon model (weapon_model.pt — 148MB)...")
+        try:
+            weapon_model = YOLO(str(WEAPON_MODEL))
+            weapon_model(dummy, verbose=False)
+            classes = list(weapon_model.names.values())
+            logger.info("✅ Weapon model ready — classes: %s", classes)
+        except Exception as e:
+            logger.warning("⚠️  Weapon model failed: %s", e)
+    else:
+        logger.warning("⚠️  weapon_model.pt not found — generic weapon detection disabled")
+
+    # ── Load Threat model (Gun/grenade/knife/explosion — 6MB) ─────────────────
+    if THREAT_MODEL.exists():
+        logger.info("Loading threat model (threat_model.pt — Gun/grenade/knife/explosion)...")
+        try:
+            threat_model = YOLO(str(THREAT_MODEL))
+            threat_model(dummy, verbose=False)
+            classes = list(threat_model.names.values())
+            logger.info("✅ Threat model ready — classes: %s", classes)
+        except Exception as e:
+            logger.warning("⚠️  Threat model failed: %s", e)
+    else:
+        logger.warning("⚠️  threat_model.pt not found — specific threat detection disabled")
+
+    # ── Load Pose model for fight detection ────────────────────────────────────
+    logger.info("Loading Pose model (yolov8n-pose)...")
+    try:
+        pose_model = YOLO(str(POSE_MODEL))
+        pose_model(dummy, verbose=False)
+        logger.info("✅ Pose model ready (fight detection active)")
+    except Exception as e:
+        logger.warning("⚠️  Pose model failed: %s — fight detection disabled", e)
+
+    # ── Load Fire model (optional) ─────────────────────────────────────────────
+    if FIRE_MODEL.exists():
+        logger.info("Loading custom fire model...")
+        try:
+            fire_model = YOLO(str(FIRE_MODEL))
+            fire_model(dummy, verbose=False)
+            logger.info("✅ Custom fire model ready")
+        except Exception as e:
+            logger.warning("⚠️  Custom fire model failed: %s", e)
+    else:
+        logger.info("ℹ️  No fire_model.pt found — fire detection disabled (color fallback also disabled)")
+
+    # ── Load EasyOCR for license plates ───────────────────────────────────────
+    logger.info("Loading EasyOCR for license plate recognition...")
+    try:
+        import easyocr
+        ocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+        logger.info("✅ EasyOCR ready (license plate OCR active)")
+    except Exception as e:
+        logger.warning("⚠️  EasyOCR not available: %s — license plate text disabled", e)
+
     yield
-    logger.info("AI Microserver shutting down.")
+
+    save_faces_db()
+    logger.info("AI Microservice shut down cleanly.")
 
 
-# ── FastAPI app ────────────────────────────────────────────────────────────────
+# ── App ────────────────────────────────────────────────────────────────────────
+
 app = FastAPI(
-    title="CCTV Guard AI Microserver",
-    description="YOLOv8 object detection + FaceNet identity verification",
-    version="1.0.0",
+    title="CCTV Guard AI Microservice",
+    description="Multi-model: YOLOv8 COCO + Weapon + Threat + Pose + Fire + OCR + FaceNet",
+    version="4.0.0",
     lifespan=lifespan,
 )
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
-class BoundingBox(BaseModel):
-    x: int
-    y: int
-    w: int
-    h: int
 
+class BoundingBox(BaseModel):
+    x: int; y: int; w: int; h: int
 
 class Detection(BaseModel):
-    label: str          # e.g. "weapon", "person", "fight"
-    yolo_class: str     # raw YOLO class name
-    confidence: float   # 0.0 – 1.0
-    severity: str       # critical | high | medium | low
+    label: str
+    yolo_class: str
+    confidence: float
+    severity: str
     bounding_box: BoundingBox
-
+    face_matched: bool = False
+    face_username: Optional[str] = None
+    face_confidence: float = 0.0
+    plate_text: Optional[str] = None   # license plate OCR result
 
 class DetectResponse(BaseModel):
     camera_id: str
     timestamp: float
     detections: list[Detection]
     inference_ms: float
-
-
-class IdentifyResponse(BaseModel):
-    matched: bool
-    username: Optional[str]
-    confidence: float
-
+    face_recognition_ms: float = 0.0
 
 class HealthResponse(BaseModel):
     status: str
-    model_loaded: bool
+    models: dict
     known_faces_count: int
     version: str
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-def decode_frame(data: str) -> np.ndarray:
-    """Decode a base64-encoded JPEG string to an OpenCV BGR image."""
-    img_bytes = base64.b64decode(data)
-    img_array = np.frombuffer(img_bytes, dtype=np.uint8)
-    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("Failed to decode image from base64 data.")
-    return img
-
-
-def upload_to_cv2(file_bytes: bytes) -> np.ndarray:
-    """Convert uploaded file bytes to an OpenCV BGR image."""
-    img_array = np.frombuffer(file_bytes, dtype=np.uint8)
-    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("Failed to decode uploaded image.")
-    return img
-
-
-# ── Endpoints ──────────────────────────────────────────────────────────────────
+# ── /health ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 def health():
-    """Returns service status and loaded model info."""
     return HealthResponse(
         status="ok",
-        model_loaded=yolo_model is not None,
+        models={
+            "coco":    coco_model is not None,
+            "pose":    pose_model is not None,
+            "weapon":  weapon_model is not None,
+            "threat":  threat_model is not None,
+            "fire":    fire_model is not None,
+            "ocr":     ocr_reader is not None,
+            "face":    True,
+        },
         known_faces_count=len(known_faces),
-        version="1.0.0",
+        version="4.0.0",
     )
 
+
+# ── /detect ────────────────────────────────────────────────────────────────────
 
 @app.post("/detect", response_model=DetectResponse, tags=["Detection"])
 async def detect(
     camera_id: str = Form(...),
-    frame_base64: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
-    confidence_threshold: float = Form(0.45),
+    frame_base64: Optional[str] = Form(None),
+    confidence_threshold: float = Form(0.25),
+    run_face_recognition: bool = Form(True),
 ):
-    """
-    Run YOLOv8 detection on a single frame.
-
-    Accepts either:
-    - `frame_base64`: base64-encoded JPEG string
-    - `file`: multipart JPEG upload
-
-    Returns bounding boxes, labels, confidence scores, and severity.
-    """
-    if yolo_model is None:
-        raise HTTPException(status_code=503, detail="Model not loaded yet.")
+    if coco_model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded.")
 
     # Decode frame
     try:
-        if frame_base64:
-            img = decode_frame(frame_base64)
-        elif file:
-            img = upload_to_cv2(await file.read())
-        else:
-            raise HTTPException(status_code=400, detail="Provide frame_base64 or file.")
-    except ValueError as e:
+        img = bytes_to_cv2(await file.read()) if file else base64_to_cv2(frame_base64 or "")
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Run YOLOv8 inference
+    img_h, img_w = img.shape[:2]
     t0 = time.perf_counter()
-    results = yolo_model(img, conf=confidence_threshold, verbose=False)
+    detections: list[Detection] = []
+    face_recognition_ms = 0.0
+
+    # ── 1. COCO detection: persons, vehicles, knives (fallback weapons) ───────
+    coco_results = coco_model(img, conf=confidence_threshold, verbose=False)
     inference_ms = (time.perf_counter() - t0) * 1000
 
-    detections: list[Detection] = []
-    for result in results:
+    for result in coco_results:
         for box in result.boxes:
-            cls_id    = int(box.cls[0])
-            cls_name  = result.names[cls_id].lower()
-            conf      = float(box.conf[0])
+            cls_name = result.names[int(box.cls[0])].lower()
+            conf     = float(box.conf[0])
             x1, y1, x2, y2 = map(int, box.xyxy[0])
+            x1 = max(0, x1); y1 = max(0, y1)
+            x2 = min(img_w, x2); y2 = min(img_h, y2)
 
-            # Map YOLO class to our incident label
-            incident_label = LABEL_MAP.get(cls_name, cls_name)
-            severity       = SEVERITY_MAP.get(incident_label, "low")
+            face_matched = False; face_username = None; face_conf = 0.0
+            plate_text   = None
+            label        = "unknown"
+            severity      = "low"
+
+            if cls_name in WEAPON_CLASSES:
+                label    = "weapon"
+                severity = "critical"
+
+            elif cls_name == "person":
+                label    = "person"
+                severity = "low"
+                # Face recognition
+                if run_face_recognition:
+                    tf   = time.perf_counter()
+                    crop = img[y1:y2, x1:x2]
+                    if crop.size > 0:
+                        matched, username, face_score = identify_face(crop)
+                        face_recognition_ms += (time.perf_counter() - tf) * 1000
+                        if matched:
+                            face_matched  = True
+                            face_username = username
+                            face_conf     = face_score
+                            label         = "person"
+                            severity      = "low"
+                        elif known_faces:
+                            # Known faces registered but this person is not recognised
+                            label    = "unknown_face"
+                            severity = "high"
+                        else:
+                            # No faces registered — treat any person as potential intrusion
+                            label    = "intrusion"
+                            severity = "medium"
+
+            elif cls_name in VEHICLE_CLASSES:
+                label    = "license_plate"
+                severity = "low"
+                crop = img[y1:y2, x1:x2]
+                if crop.size > 0:
+                    plate_text = read_license_plate(crop)
+
+            else:
+                continue  # skip irrelevant COCO classes
 
             detections.append(Detection(
-                label=incident_label,
-                yolo_class=cls_name,
-                confidence=round(conf, 4),
+                label=label, yolo_class=cls_name, confidence=round(conf, 4),
                 severity=severity,
-                bounding_box=BoundingBox(
-                    x=x1, y=y1,
-                    w=x2 - x1,
-                    h=y2 - y1,
-                ),
+                bounding_box=BoundingBox(x=x1, y=y1, w=x2-x1, h=y2-y1),
+                face_matched=face_matched, face_username=face_username,
+                face_confidence=face_conf, plate_text=plate_text,
             ))
 
+    # ── 2. Dedicated weapon model — generic "weapon" class (148MB) ──────────────
+    if weapon_model is not None:
+        w_results = weapon_model(img, conf=confidence_threshold, verbose=False)
+        for result in w_results:
+            for box in result.boxes:
+                cls_name = result.names[int(box.cls[0])].lower()
+                conf     = float(box.conf[0])
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                x1 = max(0, x1); y1 = max(0, y1)
+                x2 = min(img_w, x2); y2 = min(img_h, y2)
+                detections.append(Detection(
+                    label="weapon", yolo_class=cls_name,
+                    confidence=round(conf, 4), severity="critical",
+                    bounding_box=BoundingBox(x=x1, y=y1, w=x2-x1, h=y2-y1),
+                ))
+
+    # ── 3. Threat model — Gun / grenade / knife / explosion (6MB) ────────────
+    if threat_model is not None:
+        t_results = threat_model(img, conf=confidence_threshold, verbose=False)
+        for result in t_results:
+            for box in result.boxes:
+                cls_name = result.names[int(box.cls[0])]   # preserve original case
+                cls_lower = cls_name.lower()
+                conf      = float(box.conf[0])
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                x1 = max(0, x1); y1 = max(0, y1)
+                x2 = min(img_w, x2); y2 = min(img_h, y2)
+
+                # Map class to label/severity
+                if cls_lower in {"gun", "grenade", "knife", "weapon", "pistol",
+                                  "rifle", "blade", "sword", "dagger", "machete", "handgun"}:
+                    label    = "weapon"
+                    severity = "critical"
+                elif cls_lower == "explosion":
+                    label    = "fire"
+                    severity = "critical"
+                else:
+                    label    = cls_lower
+                    severity = "high"
+
+                detections.append(Detection(
+                    label=label, yolo_class=cls_name,
+                    confidence=round(conf, 4), severity=severity,
+                    bounding_box=BoundingBox(x=x1, y=y1, w=x2-x1, h=y2-y1),
+                ))
+
+    # ── 4. Fight detection via pose estimation ────────────────────────────────
+    fight_detections = detect_fight(camera_id, img)
+    for fd in fight_detections:
+        bb = fd["bounding_box"]
+        detections.append(Detection(
+            label=fd["label"], yolo_class=fd["yolo_class"],
+            confidence=fd["confidence"], severity=fd["severity"],
+            bounding_box=BoundingBox(**bb),
+        ))
+
+    # ── 5. Fire detection ─────────────────────────────────────────────────────
+    fire_detections = detect_fire(img, confidence_threshold)
+    for fd in fire_detections:
+        bb = fd["bounding_box"]
+        detections.append(Detection(
+            label=fd["label"], yolo_class=fd["yolo_class"],
+            confidence=fd["confidence"], severity=fd["severity"],
+            bounding_box=BoundingBox(**bb),
+        ))
+
+    total_ms = (time.perf_counter() - t0) * 1000
     logger.info(
-        "camera=%s detections=%d inference=%.1fms",
-        camera_id, len(detections), inference_ms
+        "camera=%s detections=%d total=%.1fms (coco=%.1fms face=%.1fms)",
+        camera_id, len(detections), total_ms, inference_ms, face_recognition_ms
     )
 
     return DetectResponse(
@@ -227,100 +616,46 @@ async def detect(
         timestamp=time.time(),
         detections=detections,
         inference_ms=round(inference_ms, 2),
+        face_recognition_ms=round(face_recognition_ms, 2),
     )
 
 
-@app.post("/identify", response_model=IdentifyResponse, tags=["Face Recognition"])
-async def identify(
-    file: UploadFile = File(...),
-    threshold: float = Form(0.6),
-):
-    """
-    Run FaceNet identity check on a cropped face image.
-    Compares against registered known faces.
-
-    Returns matched username and confidence if a match is found.
-    """
-    if not known_faces:
-        return IdentifyResponse(matched=False, username=None, confidence=0.0)
-
-    try:
-        from deepface import DeepFace
-
-        img_bytes = await file.read()
-        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-
-        # Get embedding for the input face
-        embedding_result = DeepFace.represent(
-            img_path=img,
-            model_name="Facenet",
-            enforce_detection=False,
-        )
-        if not embedding_result:
-            return IdentifyResponse(matched=False, username=None, confidence=0.0)
-
-        input_embedding = np.array(embedding_result[0]["embedding"])
-
-        # Compare against known faces (cosine similarity)
-        best_match: Optional[str] = None
-        best_score = 0.0
-
-        for username, known_embedding in known_faces.items():
-            dot   = np.dot(input_embedding, known_embedding)
-            norm  = np.linalg.norm(input_embedding) * np.linalg.norm(known_embedding)
-            score = float(dot / norm) if norm > 0 else 0.0
-            if score > best_score:
-                best_score = score
-                best_match = username
-
-        matched = best_score >= threshold
-        return IdentifyResponse(
-            matched=matched,
-            username=best_match if matched else None,
-            confidence=round(best_score, 4),
-        )
-
-    except Exception as e:
-        logger.error("Identity check failed: %s", e)
-        return IdentifyResponse(matched=False, username=None, confidence=0.0)
-
+# ── /register-face ─────────────────────────────────────────────────────────────
 
 @app.post("/register-face", tags=["Face Recognition"])
-async def register_face(
-    username: str = Form(...),
-    file: UploadFile = File(...),
-):
-    """
-    Register a known person's face embedding.
-    Call this once per person to build the identity database.
-    """
+async def register_face(username: str = Form(...), file: UploadFile = File(...)):
     try:
-        from deepface import DeepFace
-
-        img_bytes = await file.read()
-        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-
-        result = DeepFace.represent(
-            img_path=img,
-            model_name="Facenet",
-            enforce_detection=False,
-        )
-        if not result:
-            raise HTTPException(status_code=400, detail="No face detected in the image.")
-
-        known_faces[username] = np.array(result[0]["embedding"])
-        logger.info("Registered face for user: %s", username)
+        img = bytes_to_cv2(await file.read())
+        embedding = get_face_embedding(img)
+        if embedding is None:
+            raise HTTPException(status_code=400, detail="No face detected. Use a clear frontal photo.")
+        known_faces[username] = embedding
+        save_faces_db()
+        logger.info("Registered face for '%s'. Total: %d", username, len(known_faces))
         return {"message": f"Face registered for '{username}'.", "total_registered": len(known_faces)}
-
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to register face: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── /faces ─────────────────────────────────────────────────────────────────────
+
+@app.get("/faces", tags=["Face Recognition"])
+def list_faces():
+    return {"faces": list(known_faces.keys()), "total": len(known_faces)}
+
+@app.delete("/faces/{username}", tags=["Face Recognition"])
+def delete_face(username: str):
+    if username not in known_faces:
+        raise HTTPException(status_code=404, detail=f"'{username}' not found.")
+    del known_faces[username]
+    save_faces_db()
+    return {"message": f"'{username}' removed.", "total_registered": len(known_faces)}
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
