@@ -107,7 +107,14 @@ export class IncidentsComponent implements OnInit {
     return ({ new: 'danger', acknowledged: 'warning', resolved: 'success' } as Record<string,string>)[s] ?? 'secondary';
   }
   getIncidentIcon(type: string): string {
-    return ({ fight: '🥊', weapon: '🔫', intrusion: '🚨', unknown_face: '👤', license_plate: '🚗' } as Record<string,string>)[type] ?? '⚠️';
+    return ({
+      fight: '🥊', weapon: '🔫', intrusion: '🚨',
+      unknown_face: '👤', license_plate: '🚗', fire: '🔥'
+    } as Record<string,string>)[type] ?? '⚠️';
+  }
+  /** Convert snake_case type to Title Case for display */
+  formatType(type: string): string {
+    return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   }
   formatDate(date: Date): string { return new Date(date).toLocaleString(); }
 }

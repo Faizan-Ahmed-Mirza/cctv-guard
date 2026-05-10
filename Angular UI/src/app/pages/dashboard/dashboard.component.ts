@@ -109,7 +109,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   getIncidentIcon(type: string): string {
-    return ({ fight: '🥊', weapon: '🔫', intrusion: '🚨', unknown_face: '👤', license_plate: '🚗' } as Record<string,string>)[type] ?? '⚠️';
+    return ({ fight: '🥊', weapon: '🔫', intrusion: '🚨', unknown_face: '👤', license_plate: '🚗', fire: '🔥' } as Record<string,string>)[type] ?? '⚠️';
+  }
+
+  formatIncidentType(type: string): string {
+    return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   }
 
   formatTime(date: Date): string {

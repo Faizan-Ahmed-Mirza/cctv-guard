@@ -8,6 +8,7 @@ ultralytics==8.3.40          # YOLOv8 COCO + Pose models
 opencv-python-headless==4.10.0.84
 Pillow>=11.0.0
 numpy==1.26.4
+omegaconf>=2.3.0             # required by fire_model.pt
 
 # ── License Plate OCR ─────────────────────────────────────────────────────────
 easyocr                      # reads license plate text from vehicle crops

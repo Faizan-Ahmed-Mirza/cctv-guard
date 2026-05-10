@@ -1,9 +1,9 @@
-import { Component, Input, Output, EventEmitter, signal, OnInit } from '@angular/core';
+import { Component, Input, Output, EventEmitter, signal, OnInit, OnDestroy } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../../services/auth.service';
-import { ApiService } from '../../../services/api.service';
-import { firstValueFrom } from 'rxjs';
+import { AlertBadgeService } from '../../../services/alert-badge.service';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-sidebar',
@@ -12,13 +12,14 @@ import { firstValueFrom } from 'rxjs';
   templateUrl: './sidebar.component.html',
   styleUrl: './sidebar.component.scss'
 })
-export class SidebarComponent implements OnInit {
+export class SidebarComponent implements OnInit, OnDestroy {
   @Input() collapsed  = false;
   @Input() mobileOpen = false;
   @Input() isMobile   = false;
   @Output() linkClicked = new EventEmitter<void>();
 
   unreadAlerts = signal(0);
+  private badgeSub: Subscription | null = null;
 
   get navItems() {
     const role = this.auth.currentUser()?.role;
@@ -36,18 +37,15 @@ export class SidebarComponent implements OnInit {
     });
   }
 
-  constructor(public auth: AuthService, private api: ApiService) {}
+  constructor(public auth: AuthService, private badge: AlertBadgeService) {}
 
-  async ngOnInit(): Promise<void> {
-    await this.loadUnreadCount();
-    setInterval(() => this.loadUnreadCount(), 30000);
+  ngOnInit(): void {
+    // Subscribe to the shared badge service — stays in sync with header badge
+    this.badgeSub = this.badge.count$.subscribe(n => this.unreadAlerts.set(n));
   }
 
-  private async loadUnreadCount(): Promise<void> {
-    try {
-      const alerts = await firstValueFrom(this.api.getAlerts(undefined, false));
-      this.unreadAlerts.set(alerts.filter(a => !a.read).length);
-    } catch { /* ignore */ }
+  ngOnDestroy(): void {
+    this.badgeSub?.unsubscribe();
   }
 
   onNavClick(): void { this.linkClicked.emit(); }

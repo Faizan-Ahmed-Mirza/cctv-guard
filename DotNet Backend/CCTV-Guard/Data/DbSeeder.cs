@@ -32,6 +32,27 @@ public static class DbSeeder
         }
         catch { /* ignore — column may already be correct */ }
 
+        // ── Create FacialEmbeddings table if it doesn't exist ──────────────────
+        // This table was added after initial DB creation, so we create it manually
+        // rather than requiring a full EF migration.
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(@"
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'FacialEmbeddings')
+                BEGIN
+                    CREATE TABLE FacialEmbeddings (
+                        Id             INT IDENTITY(1,1) PRIMARY KEY,
+                        Username       NVARCHAR(50)   NOT NULL,
+                        EmbeddingJson  NVARCHAR(MAX)  NOT NULL,
+                        RegisteredAt   DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+                        RegisteredBy   NVARCHAR(50)   NOT NULL DEFAULT '',
+                        CONSTRAINT UQ_FacialEmbeddings_Username UNIQUE (Username)
+                    );
+                END
+            ");
+        }
+        catch { /* ignore — table may already exist */ }
+
         // AiSettings must always exist (Id=1) — SettingsController does FindAsync(1)
         // and the Configuration page breaks if this row is missing.
         if (!await db.AiSettings.AnyAsync())

@@ -36,6 +36,12 @@
       <button class="tab-btn" [class.active]="activeTab() === 'ai'" (click)="activeTab.set('ai')">
         🤖 AI &amp; Detection
       </button>
+      <button class="tab-btn" [class.active]="activeTab() === 'faces'" (click)="activeTab.set('faces')">
+        👤 Face Recognition
+        @if (registeredFaces().length > 0) {
+          <span class="tab-count-badge">{{ registeredFaces().length }}</span>
+        }
+      </button>
       <button class="tab-btn" [class.active]="activeTab() === 'users'" (click)="activeTab.set('users')">
         👥 Users &amp; Access
       </button>
@@ -146,6 +152,7 @@
           <span>🤖</span>
           <span>{{ aiSettings().modelVersion }}</span>
           <span class="badge badge-success">Active</span>
+          <span class="badge badge-info" title="Face recognition model accuracy">Face: 97.4%</span>
         </div>
       </div>
 
@@ -549,6 +556,250 @@
     </div>
   }
 
+  <!-- ══ FACE RECOGNITION TAB ══ -->
+  @if (activeTab() === 'faces') {
+    <div class="tab-content">
+
+      <div class="section-header-row">
+        <h2>Face Recognition Database</h2>
+        <div class="face-count-chip">
+          <span>👤</span>
+          <span>{{ registeredFaces().length }} registered</span>
+        </div>
+      </div>
+
+      <div class="face-recognition-grid">
+
+        <!-- ── Register new face ── -->
+        <div class="card face-register-card">
+          <h3 class="card-title">Register New Face</h3>
+          <p class="card-desc">
+            Upload a clear, front-facing photo. The system will extract a FaceNet embedding
+            and store it. Once registered, this person will be identified in camera feeds
+            instead of triggering an "Unknown Face" alert.
+          </p>
+
+          @if (faceRegError()) {
+            <div class="face-error-banner">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              {{ faceRegError() }}
+            </div>
+          }
+
+          <div class="face-form">
+            <!-- Upload / Webcam tabs -->
+            <div class="photo-source-tabs">
+              <button class="photo-tab" [class.active]="faceInputMode() === 'upload'" (click)="faceInputMode.set('upload')">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                Upload Photo
+              </button>
+              <button class="photo-tab" [class.active]="faceInputMode() === 'webcam'" (click)="startWebcam()">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M23 7l-7 5 7 5V7z"/>
+                  <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                </svg>
+                Use Webcam
+              </button>
+            </div>
+
+            <!-- Upload mode -->
+            @if (faceInputMode() === 'upload') {
+              <div class="photo-upload-area" (click)="photoInput.click()">
+                @if (faceRegPreview()) {
+                  <img [src]="faceRegPreview()!" alt="Preview" class="photo-preview" />
+                  <div class="photo-overlay">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                      <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                    <span>Change photo</span>
+                  </div>
+                } @else {
+                  <div class="photo-placeholder">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+                      <circle cx="12" cy="7" r="4"/>
+                    </svg>
+                    <span>Click to upload photo</span>
+                    <span class="photo-hint">JPG, PNG — clear frontal face</span>
+                  </div>
+                }
+                <input
+                  #photoInput
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  style="display:none"
+                  (change)="onFaceFileChange($event)"
+                />
+              </div>
+            }
+
+            <!-- Webcam mode -->
+            @if (faceInputMode() === 'webcam') {
+              <div class="webcam-area">
+                @if (!webcamCaptured()) {
+                  <video id="webcamVideo" class="webcam-video" autoplay playsinline muted></video>
+                  <div class="webcam-guide">
+                    <div class="face-oval"></div>
+                    <span>Position your face in the oval</span>
+                  </div>
+                  <button class="btn btn-primary webcam-capture-btn" (click)="captureWebcam()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"/>
+                      <circle cx="12" cy="12" r="4" fill="currentColor"/>
+                    </svg>
+                    Capture
+                  </button>
+                } @else {
+                  <img [src]="faceRegPreview()!" alt="Captured" class="photo-preview" />
+                  <button class="btn btn-ghost btn-sm webcam-retake-btn" (click)="retakeWebcam()">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="23 4 23 10 17 10"/>
+                      <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+                    </svg>
+                    Retake
+                  </button>
+                }
+                <canvas id="webcamCanvas" style="display:none"></canvas>
+              </div>
+            }
+
+            <!-- Username input -->
+            <div class="form-group">
+              <label>Username</label>
+              <input
+                type="text"
+                class="form-control"
+                placeholder="e.g. john_doe"
+                [ngModel]="faceRegUsername()"
+                (ngModelChange)="faceRegUsername.set($event)"
+              />
+              <span class="field-hint">Must match an existing system user for best results</span>
+            </div>
+
+            <button
+              class="btn btn-primary"
+              (click)="registerFace()"
+              [disabled]="faceLoading() || !faceRegUsername().trim() || !faceRegFile()"
+            >
+              @if (faceLoading()) {
+                <span class="btn-spinner"></span> Registering...
+              } @else {
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+                </svg>
+                Register Face
+              }
+            </button>
+          </div>
+        </div>
+
+        <!-- ── Registered faces list ── -->
+        <div class="card face-list-card">
+          <div class="face-list-header">
+            <h3 class="card-title">Registered Faces</h3>
+            <button class="btn btn-ghost btn-sm" (click)="loadFaces()" [disabled]="faceLoading()" title="Refresh">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                [class.spin]="faceLoading()">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+              </svg>
+              Refresh
+            </button>
+          </div>
+
+          @if (faceLoading() && registeredFaces().length === 0) {
+            <div class="face-loading">
+              <div class="spinner"></div>
+              <span>Loading faces...</span>
+            </div>
+          } @else if (registeredFaces().length === 0) {
+            <div class="face-empty">
+              <span>👤</span>
+              <p>No faces registered yet.</p>
+              <p class="face-empty-hint">
+                Register faces to enable identity verification.
+                Unknown persons will trigger <strong>high-severity</strong> alerts.
+              </p>
+            </div>
+          } @else {
+            <div class="face-grid">
+              @for (face of registeredFaces(); track face) {
+                <div class="face-chip">
+                  <div class="face-avatar">
+                    {{ face.charAt(0).toUpperCase() }}
+                  </div>
+                  <div class="face-chip-info">
+                    <span class="face-chip-name">{{ face }}</span>
+                    <span class="face-chip-status">
+                      <span class="status-dot-green"></span> Enrolled
+                    </span>
+                  </div>
+                  <button
+                    class="btn btn-ghost btn-icon btn-sm face-delete-btn"
+                    (click)="confirmDeleteFace(face)"
+                    title="Remove face"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                      <path d="M10 11v6M14 11v6"/>
+                    </svg>
+                  </button>
+                </div>
+              }
+            </div>
+          }
+        </div>
+
+      </div>
+
+      <!-- How it works info box -->
+      <div class="card face-info-card">
+        <h3 class="card-title">How Face Recognition Works</h3>
+        <div class="face-info-grid">
+          <div class="face-info-step">
+            <span class="step-num">1</span>
+            <div>
+              <strong>Register</strong>
+              <p>Upload a clear frontal photo. FaceNet extracts a 128-dimension embedding vector.</p>
+            </div>
+          </div>
+          <div class="face-info-step">
+            <span class="step-num">2</span>
+            <div>
+              <strong>Detect</strong>
+              <p>When a person appears in a camera feed, YOLO detects and crops their face region.</p>
+            </div>
+          </div>
+          <div class="face-info-step">
+            <span class="step-num">3</span>
+            <div>
+              <strong>Match</strong>
+              <p>Cosine similarity is computed against all registered embeddings. Threshold: 45%.</p>
+            </div>
+          </div>
+          <div class="face-info-step">
+            <span class="step-num">4</span>
+            <div>
+              <strong>Alert</strong>
+              <p>Known person → low severity. Unknown person → <strong>high severity</strong> alert.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  }
+
   <!-- ══ SYSTEM TAB ══ -->
   @if (activeTab() === 'system') {
     <div class="tab-content">
@@ -576,11 +827,11 @@
             </div>
             <div class="sys-info-item">
               <span class="sys-label">Backend</span>
-              <span class="sys-value">Node.js / Python FastAPI</span>
+              <span class="sys-value">.NET 8 / Python FastAPI</span>
             </div>
             <div class="sys-info-item">
               <span class="sys-label">Frontend</span>
-              <span class="sys-value">Angular 19 + SCSS</span>
+              <span class="sys-value">Angular 21 + SCSS</span>
             </div>
           </div>
         </div>
@@ -1057,6 +1308,39 @@
         </button>
       </div>
 
+    </div>
+  </div>
+}
+
+<!-- ══ Face Delete Confirm Modal ══ -->
+@if (faceDeleteTarget()) {
+  <div class="modal-overlay" (click)="cancelDeleteFace()">
+    <div class="modal-content modal-sm" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <div class="modal-icon-wrap" style="background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.25);color:var(--accent-red)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Remove Face</h3>
+            <p>This will delete the face embedding</p>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-icon" (click)="cancelDeleteFace()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:14px;color:var(--text-secondary)">
+          Remove the registered face for <strong>{{ faceDeleteTarget() }}</strong>?
+          They will no longer be recognised by the system and will trigger unknown face alerts.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" (click)="cancelDeleteFace()">Cancel</button>
+        <button class="btn btn-danger" (click)="executeDeleteFace()">Remove Face</button>
+      </div>
     </div>
   </div>
 }

@@ -2,6 +2,7 @@ import { Component, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ApiService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
+import { AlertBadgeService } from '../../services/alert-badge.service';
 import { Alert } from '../../models';
 import { firstValueFrom } from 'rxjs';
 
@@ -37,12 +38,17 @@ export class AlertsComponent implements OnInit {
 
   currentTime = new Date();
 
-  constructor(private api: ApiService, public auth: AuthService) {
+  constructor(private api: ApiService, public auth: AuthService, private badge: AlertBadgeService) {
     setInterval(() => this.currentTime = new Date(), 1000);
   }
 
   async ngOnInit(): Promise<void> {
     await this.loadAlerts();
+    // Reset the header badge immediately when the user visits this page —
+    // they can see all alerts so the notification count should clear.
+    this.badge.reset();
+    // Also mark all as read on the server so the count stays 0 after navigation
+    try { await firstValueFrom(this.api.markAllAlertsRead()); } catch { /* ignore */ }
   }
 
   private async loadAlerts(): Promise<void> {
@@ -72,11 +78,14 @@ export class AlertsComponent implements OnInit {
   async markRead(id: string): Promise<void> {
     await firstValueFrom(this.api.markAlertRead(id));
     this.allAlerts.update(list => list.map(a => a.id === id ? { ...a, read: true } : a));
+    // Sync badge with new unread count
+    this.badge.set(this.allAlerts().filter(a => !a.read).length);
   }
 
   async markAllRead(): Promise<void> {
     await firstValueFrom(this.api.markAllAlertsRead());
     this.allAlerts.update(list => list.map(a => ({ ...a, read: true })));
+    this.badge.reset();
   }
 
   // ── Emergency button ───────────────────────────────────────────────────────

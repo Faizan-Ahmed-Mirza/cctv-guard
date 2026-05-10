@@ -37,6 +37,16 @@ builder.Services.AddHttpClient("AiService", client =>
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
+// Separate HTTP client for face registration — needs longer timeout
+// because Facenet512 model loads on first call (~92MB weights) and
+// face detection + embedding extraction can take 20-40 seconds on CPU.
+builder.Services.AddHttpClient("AiServiceFace", client =>
+{
+    client.BaseAddress = new Uri(
+        builder.Configuration["AiService:BaseUrl"] ?? "http://localhost:8000");
+    client.Timeout = TimeSpan.FromSeconds(90);
+});
+
 // HTTP client for camera health checks (IP Webcam probe)
 builder.Services.AddHttpClient("HealthCheck", client =>
 {

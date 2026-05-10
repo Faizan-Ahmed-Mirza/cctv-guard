@@ -5,6 +5,7 @@ import { AuthService } from '../../../services/auth.service';
 import { ApiService } from '../../../services/api.service';
 import { ThemeService } from '../../../services/theme.service';
 import { CameraStatusService } from '../../../services/camera-status.service';
+import { AlertBadgeService } from '../../../services/alert-badge.service';
 import { firstValueFrom, Subscription } from 'rxjs';
 import * as signalR from '@microsoft/signalr';
 import { environment } from '../../../../environments/environment';
@@ -19,31 +20,37 @@ import { environment } from '../../../../environments/environment';
 export class HeaderComponent implements OnInit, OnDestroy {
   @Output() toggleSidebar = new EventEmitter<void>();
 
-  unreadAlerts = signal(0);
-  currentTime  = new Date();
+  currentTime = new Date();
 
   private clockInterval: ReturnType<typeof setInterval> | null = null;
   private pollInterval:  ReturnType<typeof setInterval> | null = null;
   private alertConnection: signalR.HubConnection | null = null;
+  private badgeSub: Subscription | null = null;
+
+  // Expose badge count as a signal for the template
+  unreadAlerts = signal(0);
 
   constructor(
     public auth: AuthService,
     public theme: ThemeService,
     private api: ApiService,
-    private cameraStatus: CameraStatusService
+    private cameraStatus: CameraStatusService,
+    private badge: AlertBadgeService
   ) {}
 
   async ngOnInit(): Promise<void> {
     this.clockInterval = setInterval(() => this.currentTime = new Date(), 1000);
 
-    // Initial load
+    // Sync badge service → local signal for template rendering
+    this.badgeSub = this.badge.count$.subscribe(n => this.unreadAlerts.set(n));
+
+    // Initial load from API
     await this.loadUnreadCount();
 
-    // Poll every 30s as fallback
+    // Poll every 30s as fallback (catches any missed SignalR events)
     this.pollInterval = setInterval(() => this.loadUnreadCount(), 30000);
 
-    // Real-time: listen for NewAlert on the alerts hub
-    // Reuse the CameraStatusService connection (already connected to alerts hub)
+    // Real-time: listen for NewAlert and AlertDismissed on the alerts hub
     await this.cameraStatus.connect();
     this.subscribeToNewAlerts();
   }
@@ -51,6 +58,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     if (this.clockInterval) clearInterval(this.clockInterval);
     if (this.pollInterval)  clearInterval(this.pollInterval);
+    this.badgeSub?.unsubscribe();
     if (this.alertConnection) {
       this.alertConnection.stop().catch(() => {});
       this.alertConnection = null;
@@ -58,9 +66,6 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   private subscribeToNewAlerts(): void {
-    // Build a dedicated connection to the alerts hub just for the badge counter.
-    // We can't reuse CameraStatusService's connection directly (no public .on() access),
-    // so we open a lightweight second connection — it only listens for NewAlert events.
     if (!this.auth.getAccessToken()) return;
 
     this.alertConnection = new signalR.HubConnectionBuilder()
@@ -73,25 +78,25 @@ export class HeaderComponent implements OnInit, OnDestroy {
       .configureLogging(signalR.LogLevel.Error)
       .build();
 
-    // Every new alert → increment badge immediately (no API round-trip needed)
+    // New alert arrives → increment badge immediately
     this.alertConnection.on('NewAlert', () => {
-      this.unreadAlerts.update(n => n + 1);
+      this.badge.increment();
     });
 
-    // When user navigates to alerts page and reads them, refresh the count
+    // Alert dismissed → reload count from API to get accurate number
     this.alertConnection.on('AlertDismissed', () => {
       this.loadUnreadCount();
     });
 
     this.alertConnection.start().catch(() => {
-      // If real-time fails, polling every 30s is the fallback
+      // Polling every 30s is the fallback if SignalR fails
     });
   }
 
   private async loadUnreadCount(): Promise<void> {
     try {
       const alerts = await firstValueFrom(this.api.getAlerts(undefined, false));
-      this.unreadAlerts.set(alerts.filter(a => !a.read).length);
+      this.badge.set(alerts.filter(a => !a.read).length);
     } catch { /* ignore */ }
   }
 }

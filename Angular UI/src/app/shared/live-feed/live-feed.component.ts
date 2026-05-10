@@ -384,7 +384,7 @@ export class LiveFeedComponent implements OnInit, OnChanges, OnDestroy {
       ctx.fillStyle = `${c}22`;
       ctx.fillRect(d.x, d.y, d.w, d.h);
 
-      const label = `${d.label} ${(d.confidence * 100).toFixed(0)}%`;
+      const label = `${d.label.replace(/_/g, ' ')} ${(d.confidence * 100).toFixed(0)}%`;
       ctx.font = 'bold 12px sans-serif';
       const lw = ctx.measureText(label).width + 8;
       const ly = d.y > 18 ? d.y - 18 : d.y + d.h;

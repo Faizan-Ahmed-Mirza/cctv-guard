@@ -99,6 +99,20 @@
                 <span class="badge badge-{{ getStatusClass(cam.status) }}">{{ cam.status }}</span>
               </div>
 
+              <!-- Expand / fullscreen button -->
+              <button
+                class="cam-expand-btn"
+                (click)="selectCamera(cam); $event.stopPropagation()"
+                title="Expand camera view"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="15 3 21 3 21 9"/>
+                  <polyline points="9 21 3 21 3 15"/>
+                  <line x1="21" y1="3" x2="14" y2="10"/>
+                  <line x1="3" y1="21" x2="10" y2="14"/>
+                </svg>
+              </button>
+
               @if (cam.status === 'online' && cam.detectionEnabled) {
                 <div class="ai-badge">
                   <span>AI</span>
@@ -156,7 +170,7 @@
             <div class="incident-item" [class]="'severity-' + inc.severity">
               <div class="incident-icon">{{ getIncidentIcon(inc.type) }}</div>
               <div class="incident-details">
-                <div class="incident-type">{{ inc.type | titlecase }}</div>
+                <div class="incident-type">{{ formatIncidentType(inc.type) }}</div>
                 <div class="incident-camera">{{ inc.cameraName }}</div>
                 <div class="incident-meta">
                   <span class="badge badge-{{ getSeverityClass(inc.severity) }}">{{ inc.severity }}</span>
@@ -186,10 +200,22 @@
           <h3>{{ selectedCamera()!.name }}</h3>
           <p>{{ selectedCamera()!.location }} · {{ selectedCamera()!.ipAddress }}:{{ selectedCamera()!.port }}</p>
         </div>
-        <button class="btn btn-ghost btn-icon" (click)="closeModal()">✕</button>
+        <div class="modal-header-actions">
+          <span class="badge badge-{{ getStatusClass(selectedCamera()!.status) }}">
+            {{ selectedCamera()!.status }}
+          </span>
+          @if (selectedCamera()!.detectionEnabled) {
+            <span class="badge badge-info">AI Active</span>
+          }
+          <button class="btn btn-ghost btn-icon" (click)="closeModal()" title="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
-      <div class="modal-feed">
+      <div class="modal-feed" style="height:360px">
         @if (selectedCamera()!.rtspUrl) {
           <app-live-feed [camera]="selectedCamera()!" [autoStart]="true" style="height:100%;display:block" />
         } @else {

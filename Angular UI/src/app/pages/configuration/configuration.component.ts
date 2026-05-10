@@ -1,4 +1,4 @@
-import { Component, signal, computed, OnInit, OnDestroy } from '@angular/core';
+import { Component, signal, computed, OnInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ApiService, AiSettings } from '../../services/api.service';
@@ -15,7 +15,7 @@ import { firstValueFrom, Subscription } from 'rxjs';
   styleUrl: './configuration.component.scss'
 })
 export class ConfigurationComponent implements OnInit, OnDestroy {
-  activeTab   = signal<'cameras' | 'ai' | 'users' | 'system'>('cameras');
+  activeTab   = signal<'cameras' | 'ai' | 'users' | 'faces' | 'system'>('cameras');
   saveSuccess = signal('');
   saveError   = signal('');
   loading     = signal(true);
@@ -87,6 +87,8 @@ export class ConfigurationComponent implements OnInit, OnDestroy {
         ]);
         this.managedUsers.set(users);
         this.aiSettings.set(ai);
+        // Load registered faces for the face recognition tab
+        await this.loadFaces();
       }
     } finally {
       this.loading.set(false);
@@ -103,6 +105,7 @@ export class ConfigurationComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.statusSub?.unsubscribe();
+    this.stopWebcamStream();
   }
 
   // ── Camera methods ────────────────────────────────────────────────────────
@@ -173,9 +176,19 @@ export class ConfigurationComponent implements OnInit, OnDestroy {
   }
 
   // ── AI methods ────────────────────────────────────────────────────────────
-  toggleModule(key: string, value: boolean): void {
+  async toggleModule(key: string, value: boolean): Promise<void> {
     if (!this.auth.isAdmin()) return;
+    // Update local signal immediately for instant UI feedback
     this.aiSettings.update(s => ({ ...s, [key]: value }));
+    // Auto-save to DB so the backend picks it up within 30s
+    try {
+      await firstValueFrom(this.api.updateAiSettings(this.aiSettings()));
+      this.showSuccess(`${key.replace(/([A-Z])/g, ' $1').trim()} ${value ? 'enabled' : 'disabled'}`);
+    } catch {
+      // Revert on failure
+      this.aiSettings.update(s => ({ ...s, [key]: !value }));
+      this.showError('Failed to save setting.');
+    }
   }
 
   async saveAiSettings(): Promise<void> {
@@ -335,5 +348,166 @@ export class ConfigurationComponent implements OnInit, OnDestroy {
     const days = Math.floor(hrs / 24);
     if (days < 7)  return `${days}d ago`;
     return new Date(d).toLocaleDateString();
+  }
+
+  // ── Face Recognition methods ──────────────────────────────────────────────
+  registeredFaces  = signal<string[]>([]);
+  faceLoading      = signal(false);
+  faceRegUsername  = signal('');
+  faceRegFile      = signal<File | null>(null);
+  faceRegPreview   = signal<string | null>(null);
+  faceRegError     = signal('');
+  faceDeleteTarget = signal<string | null>(null);
+  faceInputMode    = signal<'upload' | 'webcam'>('upload');
+  webcamCaptured   = signal(false);
+
+  // Store video/canvas element refs set from template
+  private webcamVideoEl: HTMLVideoElement | null = null;
+  private webcamCanvasEl: HTMLCanvasElement | null = null;
+  private webcamStream: MediaStream | null = null;
+
+  /** Called from template (click)="startWebcam()" */
+  async startWebcam(): Promise<void> {
+    this.faceInputMode.set('webcam');
+    this.webcamCaptured.set(false);
+    this.faceRegFile.set(null);
+    this.faceRegPreview.set(null);
+    this.faceRegError.set('');
+    // Wait two ticks for Angular to render the video element
+    await new Promise(r => setTimeout(r, 150));
+    try {
+      this.webcamVideoEl  = document.getElementById('webcamVideo')  as HTMLVideoElement;
+      this.webcamCanvasEl = document.getElementById('webcamCanvas') as HTMLCanvasElement;
+      if (!this.webcamVideoEl) {
+        this.faceRegError.set('Webcam element not found. Try again.');
+        return;
+      }
+      this.webcamStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+      });
+      this.webcamVideoEl.srcObject = this.webcamStream;
+      await this.webcamVideoEl.play();
+    } catch (err: any) {
+      const msg = err?.name === 'NotAllowedError'
+        ? 'Camera permission denied. Allow camera access in browser settings.'
+        : 'Could not access webcam. Make sure no other app is using it.';
+      this.faceRegError.set(msg);
+      this.faceInputMode.set('upload');
+    }
+  }
+
+  captureWebcam(): void {
+    const video  = this.webcamVideoEl;
+    const canvas = this.webcamCanvasEl ?? document.getElementById('webcamCanvas') as HTMLCanvasElement;
+    if (!video || !canvas) {
+      this.faceRegError.set('Webcam not ready. Please try again.');
+      return;
+    }
+
+    const w = video.videoWidth  || 640;
+    const h = video.videoHeight || 480;
+    canvas.width  = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, w, h);
+
+    canvas.toBlob(blob => {
+      if (!blob) { this.faceRegError.set('Capture failed. Try again.'); return; }
+      const file = new File([blob], 'webcam-capture.jpg', { type: 'image/jpeg' });
+      this.faceRegFile.set(file);
+      this.faceRegPreview.set(canvas.toDataURL('image/jpeg', 0.92));
+      this.webcamCaptured.set(true);
+      this.stopWebcamStream();
+    }, 'image/jpeg', 0.92);
+  }
+
+  retakeWebcam(): void {
+    this.webcamCaptured.set(false);
+    this.faceRegFile.set(null);
+    this.faceRegPreview.set(null);
+    this.startWebcam();
+  }
+
+  private stopWebcamStream(): void {
+    if (this.webcamStream) {
+      this.webcamStream.getTracks().forEach(t => t.stop());
+      this.webcamStream = null;
+    }
+    if (this.webcamVideoEl) {
+      this.webcamVideoEl.srcObject = null;
+      this.webcamVideoEl = null;
+    }
+  }
+
+  async loadFaces(): Promise<void> {
+    this.faceLoading.set(true);
+    this.faceRegError.set('');
+    try {
+      const res = await firstValueFrom(this.api.getFaces());
+      this.registeredFaces.set(res.faces);
+    } catch {
+      this.faceRegError.set('Could not load faces — is the AI service running?');
+    } finally {
+      this.faceLoading.set(false);
+    }
+  }
+
+  onFaceFileChange(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file  = input.files?.[0] ?? null;
+    this.faceRegFile.set(file);
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = e => this.faceRegPreview.set(e.target?.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      this.faceRegPreview.set(null);
+    }
+  }
+
+  async registerFace(): Promise<void> {
+    const username = this.faceRegUsername().trim();
+    const file     = this.faceRegFile();
+    if (!username) { this.faceRegError.set('Enter a username.'); return; }
+    if (!file)     { this.faceRegError.set('Select a photo.'); return; }
+
+    this.faceLoading.set(true);
+    this.faceRegError.set('');
+    try {
+      await firstValueFrom(this.api.registerFace(username, file));
+      this.showSuccess(`Face registered for "${username}"`);
+      this.faceRegUsername.set('');
+      this.faceRegFile.set(null);
+      this.faceRegPreview.set(null);
+      this.webcamCaptured.set(false);
+      this.faceInputMode.set('upload');
+      await this.loadFaces();
+    } catch (err: any) {
+      const msg = err?.error?.detail
+                ?? err?.error?.message
+                ?? err?.message
+                ?? 'Registration failed. Make sure the AI service is running.';
+      this.faceRegError.set(msg);
+    } finally {
+      this.faceLoading.set(false);
+    }
+  }
+
+  confirmDeleteFace(username: string): void { this.faceDeleteTarget.set(username); }
+  cancelDeleteFace(): void                  { this.faceDeleteTarget.set(null); }
+
+  async executeDeleteFace(): Promise<void> {
+    const username = this.faceDeleteTarget();
+    if (!username) return;
+    try {
+      await firstValueFrom(this.api.deleteFace(username));
+      this.registeredFaces.update(list => list.filter(f => f !== username));
+      this.faceDeleteTarget.set(null);
+      this.showSuccess(`Face removed for "${username}"`);
+    } catch {
+      this.showError('Failed to remove face.');
+      this.faceDeleteTarget.set(null);
+    }
   }
 }

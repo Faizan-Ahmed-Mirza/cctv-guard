@@ -15,6 +15,7 @@ public class AppDbContext : DbContext
     public DbSet<AlertReadStatus> AlertReadStatuses => Set<AlertReadStatus>();
     public DbSet<UserSession> UserSessions => Set<UserSession>();
     public DbSet<AiSettings> AiSettings => Set<AiSettings>();
+    public DbSet<FacialEmbedding> FacialEmbeddings => Set<FacialEmbedding>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -130,6 +131,16 @@ public class AppDbContext : DbContext
             e.HasKey(a => a.Id);
             e.Property(a => a.ModelVersion).HasMaxLength(20);
             e.Property(a => a.GlobalConfidence).HasPrecision(4, 2);
+        });
+
+        // FacialEmbedding — stores FaceNet 128-dim vectors as JSON
+        modelBuilder.Entity<FacialEmbedding>(e =>
+        {
+            e.HasKey(f => f.Id);
+            e.HasIndex(f => f.Username).IsUnique(); // one embedding per username
+            e.Property(f => f.Username).HasMaxLength(50).IsRequired();
+            e.Property(f => f.EmbeddingJson).HasColumnType("nvarchar(max)").IsRequired();
+            e.Property(f => f.RegisteredBy).HasMaxLength(50);
         });
     }
 }

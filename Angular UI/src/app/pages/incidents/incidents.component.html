@@ -110,7 +110,7 @@
             <td>
               <div class="type-cell">
                 <span class="type-icon">{{ getIncidentIcon(inc.type) }}</span>
-                <span>{{ inc.type | titlecase }}</span>
+                <span>{{ formatType(inc.type) }}</span>
               </div>
             </td>
             <td class="col-camera">
@@ -187,7 +187,7 @@
         <div class="modal-title-row">
           <span class="modal-icon">{{ getIncidentIcon(selectedIncident()!.type) }}</span>
           <div>
-            <h3>{{ selectedIncident()!.type | titlecase }} Detected</h3>
+            <h3>{{ selectedIncident()!.type.replace('_', ' ') | titlecase }} Detected</h3>
             <p>{{ selectedIncident()!.id }}</p>
           </div>
         </div>

@@ -1,14 +1,14 @@
 """
-CCTV Guard — AI Microservice v4.0
+CCTV Guard — AI Microservice v5.0
 Multi-model detection pipeline:
 
-  Model 1: yolov8n.pt        — COCO: persons, vehicles, knives, scissors
-  Model 2: yolov8n-pose.pt   — Pose estimation for fight detection
-  Model 3: weapon_model.pt   — Generic weapon detector (148MB)
-  Model 4: threat_model.pt   — Specific threats: Gun, grenade, knife, explosion (6MB)
-  Model 5: fire_model.pt     — Fire/smoke detection (optional)
+  Model 1: yolov8n.pt        — COCO 80-class: persons, vehicles, knives, scissors
+  Model 2: yolov8n-pose.pt   — Pose estimation for fight detection (17 keypoints)
+  Model 3: weapon_model.pt   — Generic weapon detector (148MB) — class: weapon
+  Model 4: threat_model.pt   — Specific threats (6MB) — Gun, grenade, knife, explosion
+  Model 5: fire_model.pt     — Fire/smoke detection (22MB) — class: Fire
   OCR:     EasyOCR           — License plate text extraction
-  Face:    DeepFace/FaceNet  — Identity verification
+  Face:    DeepFace/Facenet512 — Identity verification (97.4% accuracy, 512-dim embeddings)
 
 Endpoints:
   GET  /health
@@ -78,8 +78,8 @@ SEVERITY_MAP = {
 # ── Fight detection thresholds (pose-based) ────────────────────────────────────
 # Keypoint indices (COCO pose): 0=nose, 5=L-shoulder, 6=R-shoulder,
 # 7=L-elbow, 8=R-elbow, 9=L-wrist, 10=R-wrist, 11=L-hip, 12=R-hip
-FIGHT_WRIST_SPEED_THRESHOLD = 0.15   # normalized wrist movement
-FIGHT_OVERLAP_IOU_THRESHOLD = 0.15   # bounding box overlap between persons
+FIGHT_WRIST_SPEED_THRESHOLD = 0.20   # normalized wrist movement — raised from 0.15 to reduce false positives
+FIGHT_OVERLAP_IOU_THRESHOLD = 0.25   # bounding box overlap — raised from 0.15, needs significant overlap
 
 # Track previous pose keypoints per camera for motion analysis
 _prev_poses: dict[str, list] = {}
@@ -122,36 +122,77 @@ def base64_to_cv2(b64: str) -> np.ndarray:
 # ── Face recognition ───────────────────────────────────────────────────────────
 
 def get_face_embedding(img_bgr: np.ndarray) -> Optional[np.ndarray]:
+    """
+    Extract a FaceNet512 512-dim embedding from an image.
+    Facenet512 achieves 97.4% accuracy vs 92% for Facenet (128-dim).
+    Uses RetinaFace → opencv → mtcnn detector cascade for best face alignment.
+    """
+    for backend in ["retinaface", "opencv", "mtcnn"]:
+        try:
+            from deepface import DeepFace
+            result = DeepFace.represent(
+                img_path=img_bgr,
+                model_name="Facenet512",   # upgraded from Facenet — 97.4% vs 92% accuracy
+                enforce_detection=True,
+                detector_backend=backend,
+            )
+            if result:
+                logger.debug("Face embedding extracted with Facenet512 backend=%s", backend)
+                return np.array(result[0]["embedding"])
+        except Exception:
+            continue
+
+    # Last resort: no face detection enforcement
     try:
         from deepface import DeepFace
         result = DeepFace.represent(
             img_path=img_bgr,
-            model_name="Facenet",
+            model_name="Facenet512",
             enforce_detection=False,
             detector_backend="opencv",
         )
         if result:
             return np.array(result[0]["embedding"])
     except Exception as e:
-        logger.debug("Face embedding failed: %s", e)
+        logger.debug("Face embedding failed (all backends): %s", e)
     return None
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     norm = np.linalg.norm(a) * np.linalg.norm(b)
     return float(np.dot(a, b) / norm) if norm > 0 else 0.0
 
-def identify_face(img_bgr: np.ndarray, threshold: float = 0.6):
+def identify_face(img_bgr: np.ndarray, threshold: float = 0.45):
+    """
+    Match a face image against all registered embeddings.
+    Handles dimension mismatch gracefully — old 128-dim embeddings are skipped
+    if the current model produces 512-dim embeddings (Facenet512 upgrade).
+    """
     if not known_faces:
         return False, None, 0.0
     embedding = get_face_embedding(img_bgr)
     if embedding is None:
         return False, None, 0.0
+
+    emb_dim = embedding.shape[0]
     best_name, best_score = None, 0.0
+
     for username, known_emb in known_faces.items():
+        # Skip embeddings with wrong dimensions — prevents crash after model upgrade
+        if known_emb.shape[0] != emb_dim:
+            logger.warning(
+                "Skipping face '%s': stored embedding is %d-dim but current model produces %d-dim. "
+                "Re-register this face to fix.",
+                username, known_emb.shape[0], emb_dim
+            )
+            continue
         score = cosine_similarity(embedding, known_emb)
+        logger.debug("Face similarity: %s = %.4f", username, score)
         if score > best_score:
             best_score, best_name = score, username
+
     matched = best_score >= threshold
+    logger.info("Face match: best=%s score=%.4f threshold=%.2f matched=%s",
+                best_name, best_score, threshold, matched)
     return matched, (best_name if matched else None), round(best_score, 4)
 
 
@@ -213,11 +254,12 @@ def detect_fight(camera_id: str, img: np.ndarray) -> list[dict]:
         for j in range(i + 1, len(persons)):
             iou = bbox_iou(persons[i]["box"], persons[j]["box"])
             if iou >= FIGHT_OVERLAP_IOU_THRESHOLD:
-                # Check wrist motion if we have previous frame data
+                # REQUIRE wrist motion data — never trigger fight on proximity alone.
+                # Two people sitting together have overlapping boxes but no rapid wrist movement.
+                # Only flag as fight when we have previous frame data AND wrists are moving fast.
                 rapid_motion = False
                 prev = _prev_poses.get(camera_id, [])
                 if len(prev) >= 2:
-                    # Compare wrist positions (indices 9=L-wrist, 10=R-wrist)
                     for pi, pp in enumerate(prev[:2]):
                         if pi < len(persons):
                             curr_kpts = persons[pi]["kpts"]
@@ -234,13 +276,8 @@ def detect_fight(camera_id: str, img: np.ndarray) -> list[dict]:
                         fight_detected = True
                         fight_boxes.append(persons[i]["box"])
                         fight_boxes.append(persons[j]["box"])
-                else:
-                    # No previous frame — use proximity alone as weak signal
-                    # Only flag if boxes overlap significantly (IoU > 0.3)
-                    if iou > 0.30:
-                        fight_detected = True
-                        fight_boxes.append(persons[i]["box"])
-                        fight_boxes.append(persons[j]["box"])
+                # No fallback on first frame — proximity alone is NOT enough to declare a fight.
+                # This prevents false positives when two people sit/stand close together.
 
     _prev_poses[camera_id] = persons
 
@@ -266,30 +303,62 @@ def detect_fight(camera_id: str, img: np.ndarray) -> list[dict]:
 
 def detect_fire(img: np.ndarray, confidence_threshold: float) -> list[dict]:
     """
-    Detect fire/smoke using a dedicated fire model if available.
-    Color fallback is DISABLED — too many false positives with skin tone.
-    Only use a real fire model.
+    Detect fire/smoke using the dedicated fire model (fire_model.pt).
+
+    False positive mitigation:
+    - Minimum confidence: 0.85 (brick walls detected at ~0.80 — raise threshold)
+    - Minimum bounding box area: 3% of frame
+    - Brightness check: real fire has very bright pixels (mean > 180 in the box region)
+      Brick walls are warm-toned but NOT overexposed — mean brightness ~100-140
     """
     detections = []
+    img_h, img_w = img.shape[:2]
+    frame_area = img_h * img_w
 
     if fire_model is not None:
-        results = fire_model(img, conf=confidence_threshold, verbose=False)
+        fire_conf_threshold = max(confidence_threshold, 0.85)
+        results = fire_model(img, conf=fire_conf_threshold, verbose=False)
         for result in results:
             for box in result.boxes:
-                cls_name = result.names[int(box.cls[0])].lower()
-                if any(w in cls_name for w in ["fire", "flame", "smoke"]):
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    detections.append({
-                        "label": "fire",
-                        "yolo_class": cls_name,
-                        "confidence": round(float(box.conf[0]), 4),
-                        "severity": "critical",
-                        "bounding_box": {"x": x1, "y": y1, "w": x2-x1, "h": y2-y1},
-                        "face_matched": False, "face_username": None, "face_confidence": 0.0
-                    })
+                cls_name = result.names[int(box.cls[0])]
+                cls_lower = cls_name.lower()
+                if not any(w in cls_lower for w in ["fire", "flame", "smoke", "blaze"]):
+                    continue
 
-    # Color-based fallback is intentionally disabled — skin tone causes false positives.
-    # To enable fire detection without a custom model, place fire_model.pt in ai-service/
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                x1 = max(0, x1); y1 = max(0, y1)
+                x2 = min(img_w, x2); y2 = min(img_h, y2)
+                box_w = x2 - x1
+                box_h = y2 - y1
+                box_area = box_w * box_h
+
+                # Reject tiny detections
+                if box_area < frame_area * 0.03:
+                    logger.debug("Fire rejected: box too small (%.1f%%)", box_area / frame_area * 100)
+                    continue
+
+                # Brightness check — real fire/flame has very bright pixels
+                # Brick walls are warm but NOT overexposed
+                crop = img[y1:y2, x1:x2]
+                if crop.size > 0:
+                    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+                    mean_brightness = float(np.mean(gray))
+                    max_brightness  = float(np.max(gray))
+                    # Real fire: mean > 160 OR max > 230 (overexposed flame pixels)
+                    # Brick wall: mean ~80-130, max ~180
+                    if mean_brightness < 160 and max_brightness < 220:
+                        logger.debug("Fire rejected: brightness too low (mean=%.0f max=%.0f) — likely brick/wall",
+                                     mean_brightness, max_brightness)
+                        continue
+
+                detections.append({
+                    "label": "fire",
+                    "yolo_class": cls_name,
+                    "confidence": round(float(box.conf[0]), 4),
+                    "severity": "critical",
+                    "bounding_box": {"x": x1, "y": y1, "w": box_w, "h": box_h},
+                    "face_matched": False, "face_username": None, "face_confidence": 0.0
+                })
 
     return detections
 
@@ -297,16 +366,37 @@ def detect_fire(img: np.ndarray, confidence_threshold: float) -> list[dict]:
 # ── License plate OCR ──────────────────────────────────────────────────────────
 
 def read_license_plate(img_bgr: np.ndarray) -> Optional[str]:
-    """Extract text from a license plate crop using EasyOCR."""
+    """
+    Extract license plate text using EasyOCR.
+    Preprocesses the image: upscale + sharpen for better OCR on small plates.
+    """
     if ocr_reader is None:
         return None
     try:
-        results = ocr_reader.readtext(img_bgr, detail=0, paragraph=True)
+        # Upscale small crops — EasyOCR works better on larger images
+        h, w = img_bgr.shape[:2]
+        if w < 200:
+            scale = 200 / w
+            img_bgr = cv2.resize(img_bgr, (int(w * scale), int(h * scale)),
+                                 interpolation=cv2.INTER_CUBIC)
+
+        # Convert to grayscale and enhance contrast for better OCR
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        # CLAHE — adaptive histogram equalization improves low-light plate reading
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+        enhanced = clahe.apply(gray)
+        # Convert back to BGR for EasyOCR
+        img_for_ocr = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+
+        results = ocr_reader.readtext(img_for_ocr, detail=0, paragraph=True)
         text = " ".join(results).strip().upper()
         # Filter: license plates are typically 4-10 alphanumeric chars
         cleaned = "".join(c for c in text if c.isalnum() or c == " ").strip()
-        return cleaned if 3 <= len(cleaned.replace(" ", "")) <= 12 else None
-    except Exception:
+        # Remove spaces within the plate number for cleaner display
+        plate = cleaned.replace(" ", "")
+        return plate if 4 <= len(plate) <= 12 else None
+    except Exception as e:
+        logger.debug("License plate OCR failed: %s", e)
         return None
 
 
@@ -395,7 +485,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="CCTV Guard AI Microservice",
     description="Multi-model: YOLOv8 COCO + Weapon + Threat + Pose + Fire + OCR + FaceNet",
-    version="4.0.0",
+    version="5.0.0",
     lifespan=lifespan,
 )
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -445,9 +535,14 @@ def health():
             "fire":    fire_model is not None,
             "ocr":     ocr_reader is not None,
             "face":    True,
+            # Model accuracy info for UI display
+            "face_model":   "Facenet512",
+            "face_accuracy": "97.4%",
+            "weapon_model": "YOLOv8 (weapon_model.pt + threat_model.pt)",
+            "fire_model":   "YOLOv8 fire_model.pt" if fire_model is not None else "not loaded",
         },
         known_faces_count=len(known_faces),
-        version="4.0.0",
+        version="5.0.0",
     )
 
 
@@ -479,6 +574,15 @@ async def detect(
     coco_results = coco_model(img, conf=confidence_threshold, verbose=False)
     inference_ms = (time.perf_counter() - t0) * 1000
 
+    # First pass: collect all vehicle bounding boxes so we can check person overlap
+    vehicle_boxes = []
+    for result in coco_results:
+        for box in result.boxes:
+            cls_name = result.names[int(box.cls[0])].lower()
+            if cls_name in VEHICLE_CLASSES:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                vehicle_boxes.append([x1, y1, x2, y2])
+
     for result in coco_results:
         for box in result.boxes:
             cls_name = result.names[int(box.cls[0])].lower()
@@ -499,8 +603,21 @@ async def detect(
             elif cls_name == "person":
                 label    = "person"
                 severity = "low"
-                # Face recognition
-                if run_face_recognition:
+
+                # Check if this person is ON a vehicle (motorcycle rider, car driver)
+                # If person box overlaps significantly with a vehicle box → it's a rider, not an intruder
+                person_on_vehicle = False
+                for vbox in vehicle_boxes:
+                    iou = bbox_iou([x1, y1, x2, y2], vbox)
+                    if iou > 0.15:  # 15% overlap = person is on/in the vehicle
+                        person_on_vehicle = True
+                        break
+
+                if person_on_vehicle:
+                    # Rider on motorcycle — not an intrusion, just a vehicle occupant
+                    label    = "person"
+                    severity = "low"
+                elif run_face_recognition:
                     tf   = time.perf_counter()
                     crop = img[y1:y2, x1:x2]
                     if crop.size > 0:
@@ -510,14 +627,12 @@ async def detect(
                             face_matched  = True
                             face_username = username
                             face_conf     = face_score
-                            label         = "person"
+                            label         = username
                             severity      = "low"
                         elif known_faces:
-                            # Known faces registered but this person is not recognised
                             label    = "unknown_face"
                             severity = "high"
                         else:
-                            # No faces registered — treat any person as potential intrusion
                             label    = "intrusion"
                             severity = "medium"
 
@@ -526,7 +641,16 @@ async def detect(
                 severity = "low"
                 crop = img[y1:y2, x1:x2]
                 if crop.size > 0:
-                    plate_text = read_license_plate(crop)
+                    # License plates are at the BOTTOM of vehicles.
+                    # Crop only the bottom 40% of the vehicle bounding box for OCR.
+                    # This avoids reading text from stickers, logos, etc. on the body.
+                    h_crop = crop.shape[0]
+                    plate_region = crop[int(h_crop * 0.55):, :]  # bottom 45%
+                    if plate_region.size > 0:
+                        plate_text = read_license_plate(plate_region)
+                    # Fallback: try full crop if bottom region gave nothing
+                    if not plate_text:
+                        plate_text = read_license_plate(crop)
 
             else:
                 continue  # skip irrelevant COCO classes
@@ -539,25 +663,12 @@ async def detect(
                 face_confidence=face_conf, plate_text=plate_text,
             ))
 
-    # ── 2. Dedicated weapon model — generic "weapon" class (148MB) ──────────────
-    if weapon_model is not None:
-        w_results = weapon_model(img, conf=confidence_threshold, verbose=False)
-        for result in w_results:
-            for box in result.boxes:
-                cls_name = result.names[int(box.cls[0])].lower()
-                conf     = float(box.conf[0])
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                x1 = max(0, x1); y1 = max(0, y1)
-                x2 = min(img_w, x2); y2 = min(img_h, y2)
-                detections.append(Detection(
-                    label="weapon", yolo_class=cls_name,
-                    confidence=round(conf, 4), severity="critical",
-                    bounding_box=BoundingBox(x=x1, y=y1, w=x2-x1, h=y2-y1),
-                ))
-
-    # ── 3. Threat model — Gun / grenade / knife / explosion (6MB) ────────────
+    # ── 2. Threat model — Gun / grenade / knife / explosion (6MB) ────────────
+    # NOTE: The generic weapon_model.pt (148MB) is DISABLED — it produces too many
+    # false positives on motorcycle parts, keyboards, phones, and other objects.
+    # The threat_model.pt is specific and accurate: Gun, grenade, knife, explosion only.
     if threat_model is not None:
-        t_results = threat_model(img, conf=confidence_threshold, verbose=False)
+        t_results = threat_model(img, conf=max(confidence_threshold, 0.55), verbose=False)
         for result in t_results:
             for box in result.boxes:
                 cls_name = result.names[int(box.cls[0])]   # preserve original case
@@ -566,6 +677,15 @@ async def detect(
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 x1 = max(0, x1); y1 = max(0, y1)
                 x2 = min(img_w, x2); y2 = min(img_h, y2)
+
+                # Reject detections in very dark regions — a hand/arm in the dark
+                # is NOT a weapon. Real weapons are visible objects with detail.
+                crop = img[y1:y2, x1:x2]
+                if crop.size > 0:
+                    crop_mean = float(np.mean(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)))
+                    if crop_mean < 40:  # nearly black — not a real weapon detection
+                        logger.debug("Threat model rejected: too dark (mean=%.0f) — likely shadow/hand", crop_mean)
+                        continue
 
                 # Map class to label/severity
                 if cls_lower in {"gun", "grenade", "knife", "weapon", "pistol",

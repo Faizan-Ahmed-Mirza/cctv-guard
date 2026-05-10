@@ -217,4 +217,27 @@ export class ApiService {
   getSystemInfo(): Observable<any> {
     return this.http.get<any>(`${this.base}/system/info`);
   }
+
+  // ── Face Recognition ───────────────────────────────────────────────────────
+  /** List all registered faces from the AI service. */
+  getFaces(): Observable<{ faces: string[]; total: number }> {
+    return this.http.get<{ faces: string[]; total: number }>(`${this.base}/faces`);
+  }
+
+  /** Register a face photo for a username. */
+  registerFace(username: string, photo: File): Observable<{ message: string; total_registered: number }> {
+    const fd = new FormData();
+    fd.append('username', username);
+    fd.append('photo', photo, photo.name);
+    return this.http.post<{ message: string; total_registered: number }>(
+      `${this.base}/faces/register`, fd
+    );
+  }
+
+  /** Delete a registered face by username. */
+  deleteFace(username: string): Observable<{ message: string; total_registered: number }> {
+    return this.http.delete<{ message: string; total_registered: number }>(
+      `${this.base}/faces/${encodeURIComponent(username)}`
+    );
+  }
 }

@@ -1,0 +1,38 @@
+name: cctv_mobile
+description: CCTV Guard Mobile Companion — real-time threat alerts via SignalR
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # SignalR client for .NET backend hub connection
+  signalr_netcore: ^1.3.4
+
+  # Local push notifications (Android + iOS)
+  flutter_local_notifications: ^17.2.2
+
+  # HTTP for REST API calls (login, fetch alerts)
+  http: ^1.2.1
+
+  # Shared preferences for storing JWT token
+  shared_preferences: ^2.2.3
+
+  # Intl for date formatting
+  intl: ^0.19.0
+
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

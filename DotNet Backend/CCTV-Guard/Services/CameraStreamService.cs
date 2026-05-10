@@ -34,6 +34,40 @@ public class CameraStreamService : IDisposable
     private static bool _ffmpegReady = false;
     private static readonly SemaphoreSlim _ffmpegInitLock = new(1, 1);
 
+    // Cache AI settings — refreshed every 30s so toggle changes take effect quickly
+    private AiSettingsCache _aiSettingsCache = new();
+    private DateTime _aiSettingsCacheExpiry = DateTime.MinValue;
+    private readonly SemaphoreSlim _aiSettingsCacheLock = new(1, 1);
+
+    private record AiSettingsCache(
+        bool FightDetection     = true,
+        bool WeaponDetection    = true,
+        bool IntrusionDetection = true,
+        bool FaceRecognition    = true,
+        bool LicensePlate       = true
+    );
+
+    private async Task<AiSettingsCache> GetAiSettingsAsync()
+    {
+        if (DateTime.UtcNow < _aiSettingsCacheExpiry) return _aiSettingsCache;
+        await _aiSettingsCacheLock.WaitAsync();
+        try
+        {
+            if (DateTime.UtcNow < _aiSettingsCacheExpiry) return _aiSettingsCache;
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var s  = await db.AiSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Id == 1);
+            if (s != null)
+                _aiSettingsCache = new AiSettingsCache(
+                    s.FightDetection, s.WeaponDetection, s.IntrusionDetection,
+                    s.FaceRecognition, s.LicensePlate);
+            _aiSettingsCacheExpiry = DateTime.UtcNow.AddSeconds(30);
+        }
+        catch { /* keep previous cache on DB error */ }
+        finally { _aiSettingsCacheLock.Release(); }
+        return _aiSettingsCache;
+    }
+
     // Cache confidence thresholds — refreshed every 60s, avoids N+1 DB queries per AI frame
     private readonly ConcurrentDictionary<string, decimal> _confidenceCache = new();
     private DateTime _confidenceCacheExpiry = DateTime.MinValue;
@@ -374,6 +408,10 @@ public class CameraStreamService : IDisposable
             // TryWait(0) = non-blocking: if AI is busy with previous frame, skip this one.
             if (frameNum % AiFrameInterval == 0)
             {
+                // Check if detection is enabled for this camera before doing any work
+                var detectionEnabled = await IsCameraDetectionEnabledAsync(cameraId);
+                if (!detectionEnabled) continue;
+
                 var sem = _aiSemaphores.GetOrAdd(cameraId, _ => new SemaphoreSlim(1, 1));
                 if (sem.Wait(0)) // non-blocking — returns false immediately if busy
                 {
@@ -395,6 +433,9 @@ public class CameraStreamService : IDisposable
     {
         if (!_aiServiceAvailable && DateTime.UtcNow < _aiNextRetryTime) return;
 
+        // Read current AI module settings — cached for 30s
+        var aiSettings = await GetAiSettingsAsync();
+
         try
         {
             var client = _httpClientFactory.CreateClient("AiService");
@@ -405,22 +446,18 @@ public class CameraStreamService : IDisposable
                 Headers = { ContentType = MediaTypeHeaderValue.Parse("image/jpeg") }
             }, "file", "frame.jpg");
 
-            var threshold = await GetConfidenceThresholdAsync(cameraId);
-            // Always send a LOW threshold to the AI service (0.25) so it returns all detections.
-            // We filter by severity in C# — this ensures weapons at 40-80% confidence are never
-            // silently dropped by the AI before we even see them.
-            // The camera's configured threshold (e.g. 0.85) is used only for non-critical classes.
             var aiThreshold = 0.25m;
             content.Add(new StringContent(aiThreshold.ToString("F2")), "confidence_threshold");
+
+            // Pass face recognition flag from AiSettings to the Python service
+            content.Add(new StringContent(aiSettings.FaceRecognition.ToString().ToLower()), "run_face_recognition");
 
             var response = await client.PostAsync("/detect", content, ct);
             if (!response.IsSuccessStatusCode) return;
 
             _aiServiceAvailable = true;
 
-            var json   = await response.Content.ReadAsStringAsync(ct);
-
-            // Log raw response for debugging
+            var json = await response.Content.ReadAsStringAsync(ct);
             _logger.LogDebug("Camera {Id}: AI raw response: {Json}", cameraId, json[..Math.Min(500, json.Length)]);
 
             AiDetectResponse? result;
@@ -441,17 +478,33 @@ public class CameraStreamService : IDisposable
                 return;
             }
 
-            // Log ALL detections for debugging
-            foreach (var d in result.Detections)
+            // Filter detections by enabled AI modules
+            var filtered = result.Detections.Where(d =>
+            {
+                return d.Label switch
+                {
+                    "weapon"        => aiSettings.WeaponDetection,
+                    "fight"         => aiSettings.FightDetection,
+                    "fire"          => true,  // fire always on — no separate toggle
+                    "intrusion"     => aiSettings.IntrusionDetection,
+                    "unknown_face"  => aiSettings.FaceRecognition,
+                    "person"        => true,  // always show persons (low severity, no alert)
+                    "license_plate" => aiSettings.LicensePlate,
+                    _               => true
+                };
+            }).ToList();
+
+            // Log ALL enabled detections
+            foreach (var d in filtered)
                 _logger.LogInformation("Camera {Id}: detected {Label} ({YoloClass}) conf={Conf:P0} severity={Sev}",
                     cameraId, d.Label, d.YoloClass, d.Confidence, d.Severity);
 
-            // Push ALL bounding boxes to Angular (including persons, vehicles)
+            // Push bounding boxes for enabled detections only
             _ = _hub.Clients.Group($"camera-{cameraId}")
                 .SendAsync("BoundingBoxes", new
                 {
                     cameraId,
-                    detections = result.Detections.Select(d => new
+                    detections = filtered.Select(d => new
                     {
                         label      = d.Label,
                         confidence = d.Confidence,
@@ -463,19 +516,30 @@ public class CameraStreamService : IDisposable
                     })
                 }, CancellationToken.None);
 
-            // Create incidents based on severity + confidence gates.
-            // Severity comes from the AI service and maps to detection type:
-            //   critical → weapon, fight, fire  (always alert)
-            //   high     → unknown_face         (alert at 40%+)
-            //   medium   → intrusion/person      (alert at 50%+)
-            //   low      → license_plate, vehicle (alert at 60%+)
-            foreach (var det in result.Detections.Where(d => d.Severity switch
+            // Create incidents for enabled detections only.
+            // Per-label confidence gates — calibrated to eliminate false positives:
+            //   weapon:  ≥ 70% — threat model (knife/gun/grenade) only at high confidence
+            //   fire:    ≥ 85% — fire model has false positives with warm brick surfaces
+            //   fight:   ≥ 65% — pose-based, needs high confidence to avoid false positives
+            //   unknown_face: ≥ 60% — face model is reliable above this threshold
+            //   intrusion:    ≥ 50% — person detection, lowered to catch real persons
+            //   license_plate: ≥ 40% — COCO motorcycle/car detection is 40-65% range
+            foreach (var det in filtered.Where(d =>
             {
-                "critical" => d.Confidence >= 0.25f,
-                "high"     => d.Confidence >= 0.40f,
-                "medium"   => d.Confidence >= 0.50f,
-                "low"      => d.Confidence >= 0.60f,
-                _          => false
+                return (d.Label, d.Severity) switch
+                {
+                    ("weapon",        _)          => d.Confidence >= 0.70f,
+                    ("fire",          _)          => d.Confidence >= 0.85f,
+                    ("fight",         _)          => d.Confidence >= 0.65f,
+                    ("unknown_face",  _)          => d.Confidence >= 0.60f,
+                    ("intrusion",     _)          => d.Confidence >= 0.50f,
+                    ("license_plate", _)          => d.Confidence >= 0.40f,
+                    (_,               "critical") => d.Confidence >= 0.70f,
+                    (_,               "high")     => d.Confidence >= 0.60f,
+                    (_,               "medium")   => d.Confidence >= 0.50f,
+                    (_,               "low")      => d.Confidence >= 0.40f,
+                    _                             => false
+                };
             }))
                 await CreateIncidentAsync(cameraId, det, jpeg, ct);
         }
@@ -574,6 +638,40 @@ public class CameraStreamService : IDisposable
             .FirstOrDefaultAsync(c => c.Id == cameraId))?.RtspUrl;
     }
 
+    // Cache per-camera detection enabled flag — refreshed every 30s
+    private readonly ConcurrentDictionary<string, bool> _detectionEnabledCache = new();
+    private DateTime _detectionCacheExpiry = DateTime.MinValue;
+    private readonly SemaphoreSlim _detectionCacheLock = new(1, 1);
+
+    private async Task<bool> IsCameraDetectionEnabledAsync(string cameraId)
+    {
+        if (DateTime.UtcNow < _detectionCacheExpiry &&
+            _detectionEnabledCache.TryGetValue(cameraId, out var cached))
+            return cached;
+
+        await _detectionCacheLock.WaitAsync();
+        try
+        {
+            if (DateTime.UtcNow < _detectionCacheExpiry &&
+                _detectionEnabledCache.TryGetValue(cameraId, out var cached2))
+                return cached2;
+
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var cameras = await db.Cameras.AsNoTracking()
+                .Select(c => new { c.Id, c.DetectionEnabled })
+                .ToListAsync();
+            _detectionEnabledCache.Clear();
+            foreach (var c in cameras)
+                _detectionEnabledCache[c.Id] = c.DetectionEnabled;
+            _detectionCacheExpiry = DateTime.UtcNow.AddSeconds(30);
+        }
+        catch { /* keep previous cache */ }
+        finally { _detectionCacheLock.Release(); }
+
+        return _detectionEnabledCache.TryGetValue(cameraId, out var result) && result;
+    }
+
     private async Task<decimal> GetConfidenceThresholdAsync(string cameraId)
     {
         // Refresh cache every 60 seconds
@@ -631,9 +729,10 @@ public class CameraStreamService : IDisposable
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _aiSemaphores = new();
 
     // Incident deduplication — don't create a new incident for the same camera+label+class
-    // within a 10-second window (prevents DB flooding on continuous detections)
+    // within a 60-second window. This prevents DB flooding when a detection persists
+    // (e.g. a knife stays in frame for 30 seconds → only 1 incident, not 30).
     private readonly ConcurrentDictionary<string, DateTime> _lastIncidentTime = new();
-    private static readonly TimeSpan IncidentCooldown = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan IncidentCooldown = TimeSpan.FromSeconds(60);
 
     private record StreamState(CancellationTokenSource Cts);
 
