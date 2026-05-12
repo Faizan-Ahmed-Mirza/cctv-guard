@@ -1,10 +1,12 @@
-import { Component, signal, computed, OnInit } from '@angular/core';
+import { Component, signal, computed, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ApiService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
 import { AlertBadgeService } from '../../services/alert-badge.service';
-import { Alert } from '../../models';
+import { Alert, EmergencyNotification } from '../../models';
 import { firstValueFrom } from 'rxjs';
+import * as signalR from '@microsoft/signalr';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-alerts',
@@ -13,15 +15,18 @@ import { firstValueFrom } from 'rxjs';
   templateUrl: './alerts.component.html',
   styleUrl: './alerts.component.scss'
 })
-export class AlertsComponent implements OnInit {
-  filterSeverity     = signal('all');
-  showDismissed      = signal(false);
-  loading            = signal(true);
-  emergencyAlert     = signal<Alert | null>(null);   // alert pending emergency confirmation
-  emergencyDispatched = signal(false);               // shows the success toast
+export class AlertsComponent implements OnInit, OnDestroy {
+  filterSeverity      = signal('all');
+  showDismissed       = signal(false);
+  loading             = signal(true);
+  escalating          = signal(false);              // spinner on confirm button
+  emergencyAlert      = signal<Alert | null>(null); // alert pending confirmation
+  emergencyDispatched = signal(false);              // success toast
 
   private allAlerts = signal<Alert[]>([]);
   private dismissed = signal<Alert[]>([]);
+
+  private hubConnection: signalR.HubConnection | null = null;
 
   activeAlerts = computed(() => {
     let list = this.allAlerts();
@@ -44,11 +49,43 @@ export class AlertsComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     await this.loadAlerts();
-    // Reset the header badge immediately when the user visits this page —
-    // they can see all alerts so the notification count should clear.
     this.badge.reset();
-    // Also mark all as read on the server so the count stays 0 after navigation
     try { await firstValueFrom(this.api.markAllAlertsRead()); } catch { /* ignore */ }
+    this.connectSignalR();
+  }
+
+  ngOnDestroy(): void {
+    this.hubConnection?.stop().catch(() => {});
+  }
+
+  private connectSignalR(): void {
+    this.hubConnection = new signalR.HubConnectionBuilder()
+      .withUrl(environment.hubUrl, {
+        accessTokenFactory: () => this.auth.getAccessToken() ?? '',
+        transport: signalR.HttpTransportType.WebSockets,
+        skipNegotiation: true,
+      })
+      .withAutomaticReconnect()
+      .configureLogging(signalR.LogLevel.Error)
+      .build();
+
+    // When any operator escalates an alert, mark it in our local list
+    this.hubConnection.on('ReceiveEmergencyNotification', (data: EmergencyNotification) => {
+      this.allAlerts.update(list =>
+        list.map(a => a.id === data.alertId ? { ...a, isEscalated: true } : a)
+      );
+    });
+
+    // Sync dismissals from other sessions
+    this.hubConnection.on('AlertDismissed', (data: { alertId: string }) => {
+      const alert = this.allAlerts().find(a => a.id === data.alertId);
+      if (alert) {
+        this.allAlerts.update(list => list.filter(a => a.id !== data.alertId));
+        this.dismissed.update(list => [{ ...alert, dismissed: true }, ...list]);
+      }
+    });
+
+    this.hubConnection.start().catch(() => { /* silent — page still works without real-time */ });
   }
 
   private async loadAlerts(): Promise<void> {
@@ -78,7 +115,6 @@ export class AlertsComponent implements OnInit {
   async markRead(id: string): Promise<void> {
     await firstValueFrom(this.api.markAlertRead(id));
     this.allAlerts.update(list => list.map(a => a.id === id ? { ...a, read: true } : a));
-    // Sync badge with new unread count
     this.badge.set(this.allAlerts().filter(a => !a.read).length);
   }
 
@@ -88,37 +124,40 @@ export class AlertsComponent implements OnInit {
     this.badge.reset();
   }
 
-  // ── Emergency button ───────────────────────────────────────────────────────
+  // ── Emergency ──────────────────────────────────────────────────────────────
 
-  /** Opens the confirmation modal for the given alert. */
   contactEmergency(alert: Alert): void {
     this.emergencyAlert.set(alert);
   }
 
-  /** User cancelled — close the modal. */
   cancelEmergency(): void {
+    if (this.escalating()) return; // don't close while request is in-flight
     this.emergencyAlert.set(null);
   }
 
-  /** User confirmed — log the action, show success toast, auto-dismiss after 5s. */
-  confirmEmergency(): void {
+  async confirmEmergency(): Promise<void> {
     const alert = this.emergencyAlert();
-    if (!alert) return;
+    if (!alert || this.escalating()) return;
 
-    // Log to console for audit trail (in production this would call an API endpoint)
-    console.warn('[EMERGENCY] Services contacted for alert:', {
-      id:       alert.id,
-      type:     alert.type,
-      severity: alert.severity,
-      camera:   alert.cameraName,
-      time:     new Date(alert.timestamp).toLocaleString(),
-    });
+    this.escalating.set(true);
+    try {
+      // POST to backend → saves escalation + broadcasts ReceiveEmergencyNotification
+      // to ALL SignalR clients (Angular tabs + Flutter mobile app)
+      await firstValueFrom(this.api.escalateAlert(alert.id));
 
-    this.emergencyAlert.set(null);
-    this.emergencyDispatched.set(true);
-
-    // Auto-hide the toast after 5 seconds
-    setTimeout(() => this.emergencyDispatched.set(false), 5000);
+      // Mark locally as escalated so the badge shows immediately
+      this.allAlerts.update(list =>
+        list.map(a => a.id === alert.id ? { ...a, isEscalated: true } : a)
+      );
+    } catch (err) {
+      console.error('[EMERGENCY] Escalation API call failed:', err);
+      // Still proceed — operator action must not be blocked by network errors
+    } finally {
+      this.escalating.set(false);
+      this.emergencyAlert.set(null);
+      this.emergencyDispatched.set(true);
+      setTimeout(() => this.emergencyDispatched.set(false), 5000);
+    }
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

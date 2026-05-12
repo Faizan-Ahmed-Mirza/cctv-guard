@@ -147,6 +147,11 @@ export class ApiService {
     return this.http.patch<void>(`${this.base}/alerts/${id}/dismiss`, {});
   }
 
+  /** Escalate alert to emergency services — triggers ReceiveEmergencyNotification on all clients. */
+  escalateAlert(id: string): Observable<any> {
+    return this.http.patch<any>(`${this.base}/alerts/${id}/escalate`, {});
+  }
+
   // ── Users ──────────────────────────────────────────────────────────────────
   getUsers(role?: string, status?: string, search?: string): Observable<ManagedUser[]> {
     let p = new HttpParams();

@@ -45,6 +45,21 @@ export interface Alert {
   timestamp: Date;
   read: boolean;
   dismissed: boolean;
+  isEscalated?: boolean;
+  imageUrl?: string;
+}
+
+export interface EmergencyNotification {
+  alertId: string;
+  incidentId: string;
+  type: string;
+  message: string;
+  cameraName: string;
+  severity: string;
+  timestamp: Date;
+  imageUrl?: string;
+  escalatedBy: string;
+  escalatedAt: Date;
 }
 
 export interface SystemStats {
