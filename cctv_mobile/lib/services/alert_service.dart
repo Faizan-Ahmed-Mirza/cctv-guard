@@ -15,7 +15,7 @@ enum HubConnectionState { disconnected, connecting, connected, reconnecting }
 ///  • REST fetch of historical alerts
 ///  • Server URL persistence via SharedPreferences
 class AlertService {
-  static const String _defaultBaseUrl = 'http://192.168.45.138:5176';
+  static const String _defaultBaseUrl = 'http://192.168.127.138:5176';
   static const String _prefKey        = 'server_base_url';
 
   static final AlertService _instance = AlertService._internal();
