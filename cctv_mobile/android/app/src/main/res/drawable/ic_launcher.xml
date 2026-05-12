@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Background: dark blue -->
+    <path
+        android:fillColor="#1e3a5f"
+        android:pathData="M0,0 L108,0 L108,108 L0,108 Z"/>
+
+    <!-- Rounded rect background for icon -->
+    <path
+        android:fillColor="#3b82f6"
+        android:pathData="M20,20 Q20,12 28,12 L80,12 Q88,12 88,20 L88,88 Q88,96 80,96 L28,96 Q20,96 20,88 Z"/>
+
+    <!-- Camera body -->
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M32,42 Q32,38 36,38 L60,38 L64,32 L76,32 Q80,32 80,36 L80,72 Q80,76 76,76 L36,76 Q32,76 32,72 Z"/>
+
+    <!-- Camera lens circle -->
+    <path
+        android:fillColor="#1e3a5f"
+        android:pathData="M56,57 A12,12 0 1,1 55.99,57 Z"/>
+
+    <!-- Lens inner -->
+    <path
+        android:fillColor="#3b82f6"
+        android:pathData="M56,51 A6,6 0 1,1 55.99,51 Z"/>
+
+</vector>

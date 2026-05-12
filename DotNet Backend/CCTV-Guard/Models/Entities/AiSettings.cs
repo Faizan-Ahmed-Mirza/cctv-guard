@@ -13,7 +13,7 @@ public class AiSettings
     public bool IntrusionDetection { get; set; } = true;
     public bool FaceRecognition { get; set; } = true;
     public bool LicensePlate { get; set; } = true;
-    public decimal GlobalConfidence { get; set; } = 0.85m;
+    public decimal GlobalConfidence { get; set; } = 0.25m;
     public int AlertLatencyTarget { get; set; } = 2;
     public int FrameProcessingRate { get; set; } = 30;
     public bool GpuAcceleration { get; set; } = true;

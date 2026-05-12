@@ -11,7 +11,7 @@ public class Camera
     public string? StreamUrl { get; set; }      // HLS URL served by this backend
     public string? RtspUrl { get; set; }        // raw RTSP URL from the camera
     public bool DetectionEnabled { get; set; } = true;
-    public decimal ConfidenceThreshold { get; set; } = 0.85m;
+    public decimal ConfidenceThreshold { get; set; } = 0.25m; // lowered from 0.85 — was blocking all detections
     public int FrameRate { get; set; } = 30;
     public DateTime? LastSeen { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

@@ -1,4 +1,4 @@
-import { Component, signal, computed, OnInit } from '@angular/core';
+import { Component, signal, computed, OnInit, AfterViewChecked, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../services/api.service';
@@ -14,7 +14,7 @@ import * as XLSX from 'xlsx';
   templateUrl: './incidents.component.html',
   styleUrl: './incidents.component.scss'
 })
-export class IncidentsComponent implements OnInit {
+export class IncidentsComponent implements OnInit, AfterViewChecked {
   filterType     = signal('all');
   filterSeverity = signal('all');
   filterStatus   = signal('all');
@@ -26,6 +26,11 @@ export class IncidentsComponent implements OnInit {
 
   cameras   = signal<Camera[]>([]);
   incidents = signal<Incident[]>([]);
+
+  @ViewChild('thumbCanvas') thumbCanvasRef?: ElementRef<HTMLCanvasElement>;
+
+  // Track which incident's thumbnail has been rendered to avoid re-rendering on every change detection
+  private lastRenderedIncidentId: string | null = null;
 
   filteredIncidents = computed(() => {
     let list = this.incidents();
@@ -57,22 +62,123 @@ export class IncidentsComponent implements OnInit {
     }
   }
 
+  ngAfterViewChecked(): void {
+    const inc = this.selectedIncident();
+    if (!inc || !inc.thumbnailUrl) return;
+    if (inc.id === this.lastRenderedIncidentId) return; // already rendered
+    const canvas = this.thumbCanvasRef?.nativeElement;
+    if (!canvas) return;
+    this.lastRenderedIncidentId = inc.id;
+    this.renderThumbnail(canvas, inc);
+  }
+
+  /**
+   * Renders the incident thumbnail onto a canvas with the bounding box correctly positioned.
+   * Uses the same letterbox-aware math as the live feed component.
+   */
+  private renderThumbnail(canvas: HTMLCanvasElement, inc: Incident): void {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const img = new Image();
+    img.onload = () => {
+      // Set canvas to the container width, maintain aspect ratio
+      const containerW = canvas.parentElement?.clientWidth || 560;
+      const aspect     = img.naturalWidth / img.naturalHeight;
+      const canvasW    = containerW;
+      const canvasH    = Math.min(containerW / aspect, 320); // max 320px tall
+
+      canvas.width  = canvasW;
+      canvas.height = canvasH;
+
+      // Draw image scaled to fit (object-fit: contain equivalent)
+      const imgAspect  = img.naturalWidth / img.naturalHeight;
+      const canvAspect = canvasW / canvasH;
+
+      let renderW: number, renderH: number, offsetX: number, offsetY: number;
+      if (imgAspect > canvAspect) {
+        renderW = canvasW;
+        renderH = canvasW / imgAspect;
+        offsetX = 0;
+        offsetY = (canvasH - renderH) / 2;
+      } else {
+        renderH = canvasH;
+        renderW = canvasH * imgAspect;
+        offsetX = (canvasW - renderW) / 2;
+        offsetY = 0;
+      }
+
+      // Fill background black (letterbox bars)
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvasW, canvasH);
+
+      // Draw the image
+      ctx.drawImage(img, offsetX, offsetY, renderW, renderH);
+
+      // Draw bounding box if available
+      if (inc.boundingBox) {
+        const scaleX = renderW / img.naturalWidth;
+        const scaleY = renderH / img.naturalHeight;
+
+        const bx = offsetX + inc.boundingBox.x * scaleX;
+        const by = offsetY + inc.boundingBox.y * scaleY;
+        const bw = inc.boundingBox.width  * scaleX;
+        const bh = inc.boundingBox.height * scaleY;
+
+        // Box
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth   = 2.5;
+        ctx.strokeRect(bx, by, bw, bh);
+        ctx.fillStyle = 'rgba(239,68,68,0.15)';
+        ctx.fillRect(bx, by, bw, bh);
+
+        // Label badge
+        const label = `${inc.type.replace(/_/g, ' ')} ${(inc.confidence * 100).toFixed(0)}%`;
+        ctx.font = 'bold 13px sans-serif';
+        const tw = ctx.measureText(label).width + 10;
+        const th = 20;
+        const ly = by > th ? by - th : by + bh;
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(bx, ly, tw, th);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, bx + 5, ly + 14);
+      }
+
+      // Timestamp overlay
+      const ts = new Date(inc.timestamp).toLocaleString();
+      ctx.font = '10px monospace';
+      const tsW = ctx.measureText(ts).width + 10;
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(8, canvasH - 22, tsW, 18);
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillText(ts, 13, canvasH - 8);
+    };
+    img.src = inc.thumbnailUrl!;
+  }
+
   async acknowledge(id: string): Promise<void> {
     const updated = await firstValueFrom(this.api.acknowledgeIncident(id));
     this.incidents.update(list => list.map(i => i.id === id ? updated : i));
+    // Update selected incident if it's the one being acknowledged
+    if (this.selectedIncident()?.id === id) this.selectedIncident.set(updated);
   }
 
   async resolve(id: string): Promise<void> {
     const updated = await firstValueFrom(this.api.resolveIncident(id));
     this.incidents.update(list => list.map(i => i.id === id ? updated : i));
+    if (this.selectedIncident()?.id === id) this.selectedIncident.set(updated);
   }
 
-  viewDetails(inc: Incident): void { this.selectedIncident.set(inc); }
-  closeModal(): void               { this.selectedIncident.set(null); }
+  viewDetails(inc: Incident): void {
+    this.lastRenderedIncidentId = null; // force re-render for new incident
+    this.selectedIncident.set(inc);
+  }
+  closeModal(): void {
+    this.selectedIncident.set(null);
+    this.lastRenderedIncidentId = null;
+  }
 
-  // Scale factor: the thumbnail is displayed at 100% CSS width inside a ~480px container.
-  // The original frame is 640px wide → scale = 480/640 = 0.75
-  // Used to position the bounding box overlay on the thumbnail image.
+  // thumbScale kept for any legacy references — no longer used for positioning
   readonly thumbScale = 0.75;
 
   exportToExcel(): void {
@@ -112,7 +218,6 @@ export class IncidentsComponent implements OnInit {
       unknown_face: '👤', license_plate: '🚗', fire: '🔥'
     } as Record<string,string>)[type] ?? '⚠️';
   }
-  /** Convert snake_case type to Title Case for display */
   formatType(type: string): string {
     return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   }

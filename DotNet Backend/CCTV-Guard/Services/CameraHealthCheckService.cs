@@ -137,17 +137,18 @@ public class CameraHealthCheckService : BackgroundService
     {
         try
         {
+            // Push SignalR IMMEDIATELY — don't wait for DB write
+            // This makes the UI update in real-time without waiting for SQL
+            _ = _hub.SendCameraStatusChangedAsync(cameraId, newStatus);
+
+            // DB write in background — non-blocking
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
             var cam = await db.Cameras.FirstOrDefaultAsync(c => c.Id == cameraId, ct);
             if (cam == null) return;
-
             cam.Status   = newStatus;
             cam.LastSeen = newStatus == "online" ? DateTime.UtcNow : cam.LastSeen;
             await db.SaveChangesAsync(ct);
-
-            await _hub.SendCameraStatusChangedAsync(cameraId, newStatus);
         }
         catch (Exception ex)
         {

@@ -15,6 +15,7 @@ public class AlertService
     {
         var query = _db.Alerts
             .Include(a => a.Camera)
+            .Include(a => a.Incident)
             .Include(a => a.ReadStatuses.Where(r => r.UserId == userId))
             .AsQueryable();
 
@@ -35,6 +36,7 @@ public class AlertService
                 CameraName = a.Camera?.Name ?? string.Empty,
                 Severity = a.Severity,
                 Timestamp = new DateTimeOffset(DateTime.SpecifyKind(a.Timestamp, DateTimeKind.Utc)),
+                ImageUrl = a.Incident?.ThumbnailUrl,
                 Read = rs?.IsRead ?? false,
                 Dismissed = rs?.IsDismissed ?? false
             };

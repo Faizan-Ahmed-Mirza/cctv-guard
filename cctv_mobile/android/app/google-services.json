@@ -1,0 +1,38 @@
+{
+  "_SETUP_REQUIRED": "REPLACE THIS FILE with your real google-services.json from Firebase Console",
+  "_INSTRUCTIONS": [
+    "1. Go to https://console.firebase.google.com",
+    "2. Create a project (or use existing)",
+    "3. Add Android app with package name: com.cctvguard.mobile",
+    "4. Download google-services.json and replace this file",
+    "5. For iOS: download GoogleService-Info.plist → place in ios/Runner/",
+    "6. The app works WITHOUT Firebase (via SignalR) until this is configured"
+  ],
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "cctv-guard-placeholder",
+    "storage_bucket": "cctv-guard-placeholder.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+        "android_client_info": {
+          "package_name": "com.cctvguard.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "REPLACE_WITH_REAL_KEY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

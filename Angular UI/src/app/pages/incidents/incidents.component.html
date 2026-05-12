@@ -232,28 +232,19 @@
         <!-- Incident capture frame — real JPEG saved at detection time -->
         <div class="incident-thumbnail">
           @if (selectedIncident()!.thumbnailUrl) {
-            <div class="thumb-real">
-              <img
-                [src]="selectedIncident()!.thumbnailUrl"
-                alt="Incident capture"
-                class="thumb-img"
-              />
-              @if (selectedIncident()!.boundingBox) {
-                <div
-                  class="thumb-bbox"
-                  [style.left.px]="selectedIncident()!.boundingBox!.x * thumbScale"
-                  [style.top.px]="selectedIncident()!.boundingBox!.y * thumbScale"
-                  [style.width.px]="selectedIncident()!.boundingBox!.width * thumbScale"
-                  [style.height.px]="selectedIncident()!.boundingBox!.height * thumbScale"
-                >
-                  <span class="thumb-bbox-label">
-                    {{ selectedIncident()!.type | titlecase }}
-                    {{ (selectedIncident()!.confidence * 100).toFixed(0) }}%
-                  </span>
-                </div>
-              }
-              <div class="thumb-timestamp">{{ formatDate(selectedIncident()!.timestamp) }}</div>
-            </div>
+            <!-- Canvas-based thumbnail with accurate bounding box overlay -->
+            <canvas
+              #thumbCanvas
+              class="thumb-canvas"
+              [attr.data-bbox-x]="selectedIncident()!.boundingBox?.x"
+              [attr.data-bbox-y]="selectedIncident()!.boundingBox?.y"
+              [attr.data-bbox-w]="selectedIncident()!.boundingBox?.width"
+              [attr.data-bbox-h]="selectedIncident()!.boundingBox?.height"
+              [attr.data-label]="selectedIncident()!.type"
+              [attr.data-conf]="selectedIncident()!.confidence"
+              [attr.data-src]="selectedIncident()!.thumbnailUrl"
+            ></canvas>
+            <div class="thumb-timestamp">{{ formatDate(selectedIncident()!.timestamp) }}</div>
           } @else {
             <div class="thumb-feed">
               <div class="feed-scanline"></div>

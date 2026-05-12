@@ -61,6 +61,18 @@ public static class DbSeeder
             await db.SaveChangesAsync();
         }
 
+        // Fix existing cameras that have ConfidenceThreshold = 0.85 (the old wrong default).
+        // 0.85 blocks almost all detections — reset to 0.25 which is the correct working value.
+        var highThresholdCameras = await db.Cameras
+            .Where(c => c.ConfidenceThreshold >= 0.80m)
+            .ToListAsync();
+        if (highThresholdCameras.Count > 0)
+        {
+            foreach (var cam in highThresholdCameras)
+                cam.ConfidenceThreshold = 0.25m;
+            await db.SaveChangesAsync();
+        }
+
         // Seed a default admin user if no users exist.
         // Credentials: admin / Admin@1234
         // Change the password after first login via the Users page.

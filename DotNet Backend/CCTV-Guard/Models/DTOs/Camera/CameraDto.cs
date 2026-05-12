@@ -25,7 +25,7 @@ public class CreateCameraRequest
     [Required] public string IpAddress { get; set; } = string.Empty;
     [Range(1, 65535)] public int Port { get; set; } = 554;
     public bool DetectionEnabled { get; set; } = true;
-    [Range(0.0, 1.0)] public decimal ConfidenceThreshold { get; set; } = 0.85m;
+    [Range(0.0, 1.0)] public decimal ConfidenceThreshold { get; set; } = 0.25m;
     [Range(1, 120)] public int FrameRate { get; set; } = 30;
     public string? StreamUrl { get; set; }
     public string? RtspUrl { get; set; }

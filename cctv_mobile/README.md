@@ -1,80 +1,66 @@
-# CCTV Guard — Flutter Companion App
+# CCTV Guard Mobile
 
-Real-time threat alert companion for the CCTV Guard surveillance system.
-Connects to the .NET backend via SignalR and shows native push notifications
-when weapons, fights, fire, or intrusions are detected.
+Flutter companion app for the CCTV Guard AI surveillance system.
 
----
+## Features
 
-## Setup
+- **Real-time alerts** via SignalR WebSocket — instant threat notifications while app is open
+- **Firebase push notifications (FCM)** — alerts delivered even when app is closed/background
+- **Alert history** — fetches persisted alerts from the REST API with severity filtering
+- **Notification inbox** — grouped by date, shows all received alerts
+- **Configurable server URL** — change backend IP from Settings without rebuilding
 
-### 1. Install Flutter
-Download from https://flutter.dev/docs/get-started/install
-Add Flutter to PATH, then run: `flutter doctor`
+## Quick Start
 
-### 2. Set your server IP
-Open `lib/services/alert_service.dart` and change:
+### 1. Set server IP
+Open `lib/services/alert_service.dart` and change `_defaultBaseUrl` to your backend IP:
 ```dart
-static const String backendBaseUrl = 'https://192.168.1.100:7225';
+static const String _defaultBaseUrl = 'http://YOUR_WIFI_IP:7225';
 ```
-Replace `192.168.1.100` with your laptop's Wi-Fi IP address.
-Find it with: `ipconfig` → look for "IPv4 Address" under Wi-Fi adapter.
+Or change it at runtime in the app's **Settings** tab.
 
-### 3. Install dependencies
+### 2. Firebase setup (for push notifications)
+1. Go to [Firebase Console](https://console.firebase.google.com)
+2. Create a project → Add Android app with package `com.cctvguard.mobile`
+3. Download `google-services.json` → place in `android/app/`
+4. For iOS: download `GoogleService-Info.plist` → place in `ios/Runner/`
+
+> **Without Firebase:** The app still works fully via SignalR real-time connection.
+> Firebase only adds background push when the app is killed.
+
+### 3. Run
 ```bash
-cd cctv_mobile
 flutter pub get
-```
-
-### 4. Run on Android device / emulator
-```bash
 flutter run
 ```
 
-Or build APK:
-```bash
-flutter build apk --release
-```
-APK will be at: `build/app/outputs/flutter-apk/app-release.apk`
-
----
+## Default credentials
+- Username: `admin`
+- Password: `Admin@1234`
 
 ## Architecture
 
 ```
 lib/
-├── main.dart                    # App entry point, theme, routing
+├── main.dart                    # App entry, Firebase init, theme
 ├── models/
 │   └── alert_model.dart         # Alert data model
 ├── services/
-│   ├── alert_service.dart       # SignalR connection + event handling
-│   ├── auth_service.dart        # Login / JWT token management
-│   └── notification_service.dart # Local push notifications
+│   ├── alert_service.dart       # SignalR hub + REST API + URL persistence
+│   ├── auth_service.dart        # Login, JWT, FCM token registration
+│   └── notification_service.dart # FCM + local notifications
 └── screens/
     ├── login_screen.dart        # Login UI
-    └── dashboard_screen.dart    # Main dashboard with alert list
+    ├── main_screen.dart         # Bottom nav shell
+    ├── alerts_tab.dart          # Live + historical alerts with filters
+    ├── notifications_tab.dart   # Notification inbox grouped by date
+    └── settings_tab.dart        # Server URL, FCM token, app info
 ```
 
-## Features
+## How push notifications work
 
-- **Real-time alerts** via SignalR WebSocket connection
-- **Native push notifications** — appear even when app is in background
-- **Dark theme** matching the Angular web UI
-- **Connection status** indicator (Online/Offline/Reconnecting)
-- **Alert history** for the current session (last 100 alerts)
-- **Severity color coding** — Critical (red), High (orange), Medium (yellow), Low (green)
-- **Auto-reconnect** with exponential backoff (0s, 2s, 5s, 10s, 30s)
-- **JWT authentication** — token saved to SharedPreferences
-
-## Default Credentials
-- Username: `admin`
-- Password: `Admin@1234`
-
-## Dependencies
-| Package | Purpose |
-|---------|---------|
-| `signalr_netcore` | SignalR WebSocket client |
-| `flutter_local_notifications` | Native push notifications |
-| `http` | REST API calls (login) |
-| `shared_preferences` | JWT token persistence |
-| `intl` | Date/time formatting |
+1. On login, the app gets the FCM device token and sends it to `POST /api/auth/fcm-token`
+2. The .NET backend stores the token and uses Firebase Admin SDK to push alerts
+3. When a threat is detected, the backend sends both:
+   - SignalR `NewAlert` event (real-time, app must be connected)
+   - FCM push notification (works even when app is killed)

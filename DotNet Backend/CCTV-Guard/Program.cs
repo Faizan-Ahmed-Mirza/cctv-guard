@@ -34,7 +34,9 @@ builder.Services.AddHttpClient("AiService", client =>
 {
     client.BaseAddress = new Uri(
         builder.Configuration["AiService:BaseUrl"] ?? "http://localhost:8000");
-    client.Timeout = TimeSpan.FromSeconds(10);
+    // 30s timeout — face recognition on CPU can take 5-15s, YOLO adds another 1-3s
+    // 10s was too short and triggered the circuit breaker constantly
+    client.Timeout = TimeSpan.FromSeconds(30);
 });
 
 // Separate HTTP client for face registration — needs longer timeout

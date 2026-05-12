@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#1e3a5f</color>
+    <!-- FCM notification accent color (red for threat alerts) -->
+    <color name="notification_color">#ef4444</color>
+</resources>
