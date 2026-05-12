@@ -1,4 +1,4 @@
-import { Component, signal, computed, OnInit, AfterViewChecked, ElementRef, ViewChild } from '@angular/core';
+import { Component, signal, computed, OnInit, OnDestroy, AfterViewChecked, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../services/api.service';
@@ -6,6 +6,8 @@ import { AuthService } from '../../services/auth.service';
 import { Camera, Incident } from '../../models';
 import { firstValueFrom } from 'rxjs';
 import * as XLSX from 'xlsx';
+import * as signalR from '@microsoft/signalr';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-incidents',
@@ -14,7 +16,7 @@ import * as XLSX from 'xlsx';
   templateUrl: './incidents.component.html',
   styleUrl: './incidents.component.scss'
 })
-export class IncidentsComponent implements OnInit, AfterViewChecked {
+export class IncidentsComponent implements OnInit, OnDestroy, AfterViewChecked {
   filterType     = signal('all');
   filterSeverity = signal('all');
   filterStatus   = signal('all');
@@ -23,14 +25,14 @@ export class IncidentsComponent implements OnInit, AfterViewChecked {
   selectedIncident = signal<Incident | null>(null);
   exporting      = signal(false);
   loading        = signal(true);
+  escalating     = signal(false); // spinner on emergency button in modal
 
   cameras   = signal<Camera[]>([]);
   incidents = signal<Incident[]>([]);
 
   @ViewChild('thumbCanvas') thumbCanvasRef?: ElementRef<HTMLCanvasElement>;
-
-  // Track which incident's thumbnail has been rendered to avoid re-rendering on every change detection
   private lastRenderedIncidentId: string | null = null;
+  private hubConnection: signalR.HubConnection | null = null;
 
   filteredIncidents = computed(() => {
     let list = this.incidents();
@@ -60,6 +62,37 @@ export class IncidentsComponent implements OnInit, AfterViewChecked {
     } finally {
       this.loading.set(false);
     }
+    this.connectSignalR();
+  }
+
+  ngOnDestroy(): void {
+    this.hubConnection?.stop().catch(() => {});
+  }
+
+  private connectSignalR(): void {
+    this.hubConnection = new signalR.HubConnectionBuilder()
+      .withUrl(environment.hubUrl, {
+        accessTokenFactory: () => this.auth.getAccessToken() ?? '',
+        transport: signalR.HttpTransportType.WebSockets,
+        skipNegotiation: true,
+      })
+      .withAutomaticReconnect()
+      .configureLogging(signalR.LogLevel.Error)
+      .build();
+
+    // Real-time incident status updates — from any client (web or mobile)
+    this.hubConnection.on('IncidentUpdated', (data: { id: string; status: string }) => {
+      this.incidents.update(list =>
+        list.map(i => i.id === data.id ? { ...i, status: data.status as any } : i)
+      );
+      // Also update the open modal if it's showing this incident
+      const sel = this.selectedIncident();
+      if (sel?.id === data.id) {
+        this.selectedIncident.set({ ...sel, status: data.status as any });
+      }
+    });
+
+    this.hubConnection.start().catch(() => {});
   }
 
   ngAfterViewChecked(): void {
@@ -159,7 +192,6 @@ export class IncidentsComponent implements OnInit, AfterViewChecked {
   async acknowledge(id: string): Promise<void> {
     const updated = await firstValueFrom(this.api.acknowledgeIncident(id));
     this.incidents.update(list => list.map(i => i.id === id ? updated : i));
-    // Update selected incident if it's the one being acknowledged
     if (this.selectedIncident()?.id === id) this.selectedIncident.set(updated);
   }
 
@@ -167,6 +199,21 @@ export class IncidentsComponent implements OnInit, AfterViewChecked {
     const updated = await firstValueFrom(this.api.resolveIncident(id));
     this.incidents.update(list => list.map(i => i.id === id ? updated : i));
     if (this.selectedIncident()?.id === id) this.selectedIncident.set(updated);
+  }
+
+  /** Escalate the incident's linked alert to emergency services. */
+  async escalateIncident(inc: Incident): Promise<void> {
+    if (this.escalating()) return;
+    this.escalating.set(true);
+    try {
+      // The alert ID matches the incident ID pattern — find the alert via incidentId
+      // We call the alerts escalate endpoint using the incident's linked alert
+      await firstValueFrom(this.api.escalateAlertByIncident(inc.id));
+    } catch (err) {
+      console.error('[EMERGENCY] Escalation failed:', err);
+    } finally {
+      this.escalating.set(false);
+    }
   }
 
   viewDetails(inc: Incident): void {

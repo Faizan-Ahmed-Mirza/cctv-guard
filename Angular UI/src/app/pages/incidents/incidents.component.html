@@ -260,12 +260,38 @@
       @if (auth.canEdit()) {
         <div class="modal-footer">
           @if (selectedIncident()!.status === 'new') {
-            <button class="btn btn-ghost" (click)="acknowledge(selectedIncident()!.id); closeModal()">Acknowledge</button>
+            <button class="btn btn-ghost" (click)="acknowledge(selectedIncident()!.id)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              Acknowledge
+            </button>
           }
           @if (selectedIncident()!.status !== 'resolved') {
-            <button class="btn btn-success" (click)="resolve(selectedIncident()!.id); closeModal()">Mark Resolved</button>
+            <button class="btn btn-success" (click)="resolve(selectedIncident()!.id)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              Mark Resolved
+            </button>
           }
-          <button class="btn btn-danger btn-sm">Contact Emergency Services</button>
+          <button
+            class="btn btn-danger btn-sm"
+            [disabled]="escalating()"
+            (click)="escalateIncident(selectedIncident()!)"
+            title="Escalate to emergency services — notifies all mobile operators"
+          >
+            @if (escalating()) {
+              <span class="btn-spinner-sm"></span>
+              Sending...
+            } @else {
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.67A2 2 0 012 .84h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 8.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
+              </svg>
+              Contact Emergency
+            }
+          </button>
         </div>
       }
     </div>

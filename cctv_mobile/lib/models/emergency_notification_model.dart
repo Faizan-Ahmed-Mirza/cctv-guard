@@ -11,6 +11,8 @@ class EmergencyNotificationModel {
   final String? imageUrl;
   final String escalatedBy;
   final DateTime escalatedAt;
+  /// Tracks the incident status — updated in real-time via IncidentUpdated SignalR event.
+  final String incidentStatus;
 
   EmergencyNotificationModel({
     required this.alertId,
@@ -23,7 +25,23 @@ class EmergencyNotificationModel {
     this.imageUrl,
     required this.escalatedBy,
     required this.escalatedAt,
+    this.incidentStatus = 'new',
   });
+
+  EmergencyNotificationModel copyWith({String? incidentStatus}) =>
+      EmergencyNotificationModel(
+        alertId:        alertId,
+        incidentId:     incidentId,
+        type:           type,
+        message:        message,
+        cameraName:     cameraName,
+        severity:       severity,
+        timestamp:      timestamp,
+        imageUrl:       imageUrl,
+        escalatedBy:    escalatedBy,
+        escalatedAt:    escalatedAt,
+        incidentStatus: incidentStatus ?? this.incidentStatus,
+      );
 
   factory EmergencyNotificationModel.fromJson(Map<String, dynamic> json) {
     return EmergencyNotificationModel(

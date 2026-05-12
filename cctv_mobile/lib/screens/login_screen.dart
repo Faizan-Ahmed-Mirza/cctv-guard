@@ -8,55 +8,36 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen>
+    with SingleTickerProviderStateMixin {
   final _formKey  = GlobalKey<FormState>();
   final _userCtrl = TextEditingController(text: 'admin');
   final _passCtrl = TextEditingController();
-  final _ipCtrl   = TextEditingController();
   bool  _loading  = false;
   bool  _obscure  = true;
   String? _error;
 
+  late AnimationController _animCtrl;
+  late Animation<double>   _fadeAnim;
+  late Animation<Offset>   _slideAnim;
+
   @override
   void initState() {
     super.initState();
-    _loadIp();
+    _animCtrl = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 600));
+    _fadeAnim  = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
+    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut));
+    _animCtrl.forward();
   }
 
-  Future<void> _loadIp() async {
-    await AlertService().loadSavedUrl();
-    _ipCtrl.text = AlertService().baseUrl;
-  }
-
-  Future<void> _showIpDialog() async {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF111827),
-        title: const Text('Server Settings', style: TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: _ipCtrl,
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(
-            labelText: 'Server Base URL',
-            hintText: 'http://192.168.x.x:5176',
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () async {
-              await AlertService().saveUrl(_ipCtrl.text);
-              if (mounted) Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Server URL updated')),
-              );
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    _userCtrl.dispose();
+    _passCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _login() async {
@@ -71,155 +52,242 @@ class _LoginScreenState extends State<LoginScreen> {
       try { await AlertService().connect(); } catch (_) {}
       if (mounted) Navigator.pushReplacementNamed(context, '/home');
     } else {
-      setState(() => _error =
-          'Login failed. Check credentials or server URL in Settings.');
+      setState(() => _error = 'Invalid credentials or server unreachable.\nCheck Settings → Server URL.');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Color(0xFF6b7280)),
-            onPressed: _showIpDialog,
-            tooltip: 'Server Settings',
-          ),
-        ],
-      ),
+      backgroundColor: const Color(0xFF0a0a0f),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 40),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Brand
-                  Container(
-                    width: 80, height: 80,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF3b82f6), Color(0xFF6366f1)],
-                        begin: Alignment.topLeft, end: Alignment.bottomRight,
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            child: FadeTransition(
+              opacity: _fadeAnim,
+              child: SlideTransition(
+                position: _slideAnim,
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // ── Logo ──────────────────────────────────────────
+                      Container(
+                        width: 88, height: 88,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF3b82f6), Color(0xFF6366f1)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF3b82f6).withOpacity(0.45),
+                              blurRadius: 24,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.videocam_rounded,
+                            color: Colors.white, size: 44),
                       ),
-                      borderRadius: BorderRadius.circular(22),
-                      boxShadow: [
-                        BoxShadow(color: const Color(0xFF3b82f6).withOpacity(0.4),
-                            blurRadius: 20, offset: const Offset(0, 8)),
+                      const SizedBox(height: 24),
+                      const Text('CCTV Guard',
+                          style: TextStyle(
+                              fontSize: 30, fontWeight: FontWeight.w800,
+                              color: Colors.white, letterSpacing: -0.5)),
+                      const SizedBox(height: 6),
+                      const Text('AI Surveillance · Real-time Alerts',
+                          style: TextStyle(fontSize: 13, color: Color(0xFF6b7280))),
+                      const SizedBox(height: 48),
+
+                      // ── Error banner ──────────────────────────────────
+                      if (_error != null) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF7f1d1d),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                                color: const Color(0xFFef4444).withOpacity(0.4)),
+                          ),
+                          child: Row(children: [
+                            const Icon(Icons.error_outline,
+                                color: Color(0xFFef4444), size: 18),
+                            const SizedBox(width: 10),
+                            Expanded(child: Text(_error!,
+                                style: const TextStyle(
+                                    color: Color(0xFFfca5a5), fontSize: 13,
+                                    height: 1.4))),
+                          ]),
+                        ),
+                        const SizedBox(height: 20),
                       ],
-                    ),
-                    child: const Icon(Icons.videocam_rounded, color: Colors.white, size: 42),
-                  ),
-                  const SizedBox(height: 22),
-                  const Text('CCTV Guard',
-                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800,
-                          color: Colors.white, letterSpacing: -0.5)),
-                  const SizedBox(height: 6),
-                  const Text('AI Surveillance · Real-time Alerts',
-                      style: TextStyle(fontSize: 13, color: Color(0xFF6b7280))),
-                  const SizedBox(height: 44),
 
-                  // Error
-                  if (_error != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(13),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF7f1d1d),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFef4444).withOpacity(0.4)),
+                      // ── Username ──────────────────────────────────────
+                      TextFormField(
+                        controller: _userCtrl,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Username',
+                          prefixIcon: Icon(Icons.person_outline,
+                              color: Color(0xFF6b7280)),
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                        validator: (v) =>
+                            (v == null || v.isEmpty) ? 'Username is required' : null,
                       ),
-                      child: Row(children: [
-                        const Icon(Icons.error_outline, color: Color(0xFFef4444), size: 18),
-                        const SizedBox(width: 10),
-                        Expanded(child: Text(_error!,
-                            style: const TextStyle(color: Color(0xFFfca5a5), fontSize: 13))),
-                      ]),
-                    ),
-                    const SizedBox(height: 20),
-                  ],
+                      const SizedBox(height: 14),
 
-                  // Username
-                  TextFormField(
-                    controller: _userCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Username',
-                      prefixIcon: Icon(Icons.person_outline, color: Color(0xFF6b7280)),
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                    validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
-                  ),
-                  const SizedBox(height: 14),
-
-                  // Password
-                  TextFormField(
-                    controller: _passCtrl,
-                    obscureText: _obscure,
-                    decoration: InputDecoration(
-                      labelText: 'Password',
-                      prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF6b7280)),
-                      suffixIcon: IconButton(
-                        icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility,
-                            color: const Color(0xFF6b7280)),
-                        onPressed: () => setState(() => _obscure = !_obscure),
+                      // ── Password ──────────────────────────────────────
+                      TextFormField(
+                        controller: _passCtrl,
+                        obscureText: _obscure,
+                        textInputAction: TextInputAction.done,
+                        onFieldSubmitted: (_) => _login(),
+                        decoration: InputDecoration(
+                          labelText: 'Password',
+                          prefixIcon: const Icon(Icons.lock_outline,
+                              color: Color(0xFF6b7280)),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _obscure
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined,
+                              color: const Color(0xFF6b7280), size: 20),
+                            onPressed: () =>
+                                setState(() => _obscure = !_obscure),
+                          ),
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                        validator: (v) =>
+                            (v == null || v.isEmpty) ? 'Password is required' : null,
                       ),
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                    validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
-                    onFieldSubmitted: (_) => _login(),
-                  ),
-                  const SizedBox(height: 14),
+                      const SizedBox(height: 28),
 
-                  // Server IP (Visible for debugging)
-                  TextFormField(
-                    controller: _ipCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Server URL',
-                      prefixIcon: Icon(Icons.dns_outlined, color: Color(0xFF6b7280)),
-                      hintText: 'http://192.168.x.x:5176',
-                    ),
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                    onChanged: (v) => AlertService().saveUrl(v),
-                  ),
-                  const SizedBox(height: 28),
+                      // ── Sign In button ────────────────────────────────
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed: _loading ? null : _login,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF3b82f6),
+                            disabledBackgroundColor:
+                                const Color(0xFF1f2937),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: _loading
+                              ? const SizedBox(
+                                  width: 22, height: 22,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                      color: Colors.white))
+                              : const Text('Sign In',
+                                  style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700)),
+                        ),
+                      ),
+                      const SizedBox(height: 32),
 
-                  // Sign in button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _loading ? null : _login,
-                      child: _loading
-                          ? const SizedBox(width: 20, height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Text('Sign In'),
-                    ),
+                      // ── Server URL hint ───────────────────────────────
+                      GestureDetector(
+                        onTap: _showServerDialog,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF111827),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF1f2937)),
+                          ),
+                          child: Row(children: [
+                            const Icon(Icons.dns_outlined,
+                                color: Color(0xFF6b7280), size: 16),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Server',
+                                      style: TextStyle(
+                                          color: Color(0xFF6b7280),
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600)),
+                                  const SizedBox(height: 2),
+                                  Text(AlertService().baseUrl,
+                                      style: const TextStyle(
+                                          color: Color(0xFF9ca3af),
+                                          fontSize: 12),
+                                      overflow: TextOverflow.ellipsis),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.edit_outlined,
+                                color: Color(0xFF4b5563), size: 15),
+                          ]),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 28),
-
-                  // Hint
-                  Container(
-                    padding: const EdgeInsets.all(13),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1f2937),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Row(children: [
-                      Icon(Icons.info_outline, color: Color(0xFF6b7280), size: 15),
-                      SizedBox(width: 8),
-                      Expanded(child: Text(
-                        'Default: admin / Admin@1234\nSet server IP in Settings after login.',
-                        style: TextStyle(color: Color(0xFF6b7280), fontSize: 12),
-                      )),
-                    ]),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showServerDialog() {
+    final ctrl = TextEditingController(text: AlertService().baseUrl);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF111827),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Server URL',
+            style: TextStyle(color: Colors.white, fontSize: 16,
+                fontWeight: FontWeight.w700)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+            controller: ctrl,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              hintText: 'http://192.168.x.x:5176',
+              prefixIcon: Icon(Icons.dns_outlined, color: Color(0xFF6b7280)),
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Enter your backend server IP.\nFind it with ipconfig → Wi-Fi IPv4.',
+            style: TextStyle(color: Color(0xFF6b7280), fontSize: 12, height: 1.5),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Color(0xFF6b7280))),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              await AlertService().saveUrl(ctrl.text.trim());
+              if (mounted) {
+                Navigator.pop(ctx);
+                setState(() {}); // refresh the URL shown in the hint
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
       ),
     );
   }

@@ -44,11 +44,14 @@ class AlertService {
   final _stateCtrl     = StreamController<HubConnectionState>.broadcast();
   final _alertCtrl     = StreamController<AlertModel>.broadcast();
   final _emergencyCtrl = StreamController<EmergencyNotificationModel>.broadcast();
+  final _incidentUpdatedCtrl = StreamController<Map<String, String>>.broadcast();
 
-  Stream<HubConnectionState>          get connectionState$ => _stateCtrl.stream;
-  Stream<AlertModel>                  get alerts$          => _alertCtrl.stream;
+  Stream<HubConnectionState>          get connectionState$    => _stateCtrl.stream;
+  Stream<AlertModel>                  get alerts$             => _alertCtrl.stream;
   /// Emits whenever an operator escalates an alert to emergency services.
-  Stream<EmergencyNotificationModel>  get emergency$       => _emergencyCtrl.stream;
+  Stream<EmergencyNotificationModel>  get emergency$          => _emergencyCtrl.stream;
+  /// Emits {id, status} when any incident status changes (acknowledge/resolve).
+  Stream<Map<String, String>>         get incidentUpdated$    => _incidentUpdatedCtrl.stream;
 
   HubConnectionState _state = HubConnectionState.disconnected;
   HubConnectionState get currentState => _state;
@@ -99,8 +102,20 @@ class AlertService {
           if (raw is Map<String, dynamic>) {
             final emergency = EmergencyNotificationModel.fromJson(raw);
             _emergencyCtrl.add(emergency);
-            // Show a high-priority push notification for emergency escalations
             _notifications.showEmergencyNotification(emergency);
+          }
+        } catch (_) {}
+      });
+
+      // ── Incident status update (acknowledge / resolve from any client) ──
+      _connection!.on('IncidentUpdated', (List<Object?>? args) {
+        if (args == null || args.isEmpty) return;
+        try {
+          final raw = args[0];
+          if (raw is Map<String, dynamic>) {
+            final id     = raw['id']     as String? ?? '';
+            final status = raw['status'] as String? ?? '';
+            if (id.isNotEmpty) _incidentUpdatedCtrl.add({'id': id, 'status': status});
           }
         } catch (_) {}
       });
@@ -157,6 +172,24 @@ class AlertService {
         headers: {'Authorization': 'Bearer $_jwtToken'},
       ).timeout(const Duration(seconds: 5));
     } catch (_) {}
+  }
+
+  // ── REST: acknowledge incident ────────────────────────────────────────────
+  /// Acknowledges an incident and triggers IncidentUpdated on all SignalR clients.
+  Future<bool> acknowledgeIncident(String incidentId) async {
+    if (_jwtToken == null) return false;
+    try {
+      final res = await http.patch(
+        Uri.parse('$_baseUrl/api/incidents/$incidentId/acknowledge'),
+        headers: {
+          'Authorization': 'Bearer $_jwtToken',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
   }
 
   void _setState(HubConnectionState s) {

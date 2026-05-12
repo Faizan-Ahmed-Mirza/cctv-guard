@@ -31,6 +31,7 @@ class _MainScreenState extends State<MainScreen> {
   late StreamSubscription<HubConnectionState>         _stateSub;
   late StreamSubscription<AlertModel>                 _alertSub;
   late StreamSubscription<EmergencyNotificationModel> _emergencySub;
+  late StreamSubscription<Map<String, String>>        _incidentSub;
   HubConnectionState _connState = HubConnectionState.disconnected;
 
   @override
@@ -64,6 +65,22 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
 
+    // Incident status updates from any client (web or mobile)
+    _incidentSub = _svc.incidentUpdated$.listen((data) {
+      if (mounted) {
+        final id     = data['id']     ?? '';
+        final status = data['status'] ?? '';
+        setState(() {
+          // Update the status on any matching emergency notification
+          for (int i = 0; i < _emergencies.length; i++) {
+            if (_emergencies[i].incidentId == id) {
+              _emergencies[i] = _emergencies[i].copyWith(incidentStatus: status);
+            }
+          }
+        });
+      }
+    });
+
     _fetchHistory();
     if (_connState == HubConnectionState.disconnected) _connect();
   }
@@ -86,6 +103,7 @@ class _MainScreenState extends State<MainScreen> {
     _stateSub.cancel();
     _alertSub.cancel();
     _emergencySub.cancel();
+    _incidentSub.cancel();
     super.dispose();
   }
 
@@ -170,7 +188,10 @@ class _MainScreenState extends State<MainScreen> {
             onConnect: _connect,
             onClear: () => setState(() { _liveAlerts.clear(); _alertUnread = 0; }),
           ),
-          NotificationsTab(emergencies: _emergencies),
+          NotificationsTab(
+            emergencies: _emergencies,
+            onReload: () => setState(() {}), // triggers rebuild with current list
+          ),
           const SettingsTab(),
         ],
       ),

@@ -152,6 +152,11 @@ export class ApiService {
     return this.http.patch<any>(`${this.base}/alerts/${id}/escalate`, {});
   }
 
+  /** Escalate the alert linked to an incident (used from the Incidents page). */
+  escalateAlertByIncident(incidentId: string): Observable<any> {
+    return this.http.patch<any>(`${this.base}/incidents/${incidentId}/escalate`, {});
+  }
+
   // ── Users ──────────────────────────────────────────────────────────────────
   getUsers(role?: string, status?: string, search?: string): Observable<ManagedUser[]> {
     let p = new HttpParams();

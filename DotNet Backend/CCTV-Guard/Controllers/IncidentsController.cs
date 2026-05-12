@@ -1,8 +1,11 @@
 using System.Security.Claims;
+using CCTV_Guard.Data;
+using CCTV_Guard.Models.DTOs.Alert;
 using CCTV_Guard.Models.DTOs.Incident;
 using CCTV_Guard.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace CCTV_Guard.Controllers;
 
@@ -13,11 +16,19 @@ public class IncidentsController : ControllerBase
 {
     private readonly IncidentService _incidentService;
     private readonly HubNotificationService _hub;
+    private readonly AlertService _alertService;
+    private readonly AppDbContext _db;
 
-    public IncidentsController(IncidentService incidentService, HubNotificationService hub)
+    public IncidentsController(
+        IncidentService incidentService,
+        HubNotificationService hub,
+        AlertService alertService,
+        AppDbContext db)
     {
         _incidentService = incidentService;
-        _hub = hub;
+        _hub             = hub;
+        _alertService    = alertService;
+        _db              = db;
     }
 
     [HttpGet]
@@ -55,6 +66,49 @@ public class IncidentsController : ControllerBase
         // Push real-time update to all connected clients
         await _hub.SendIncidentUpdatedAsync(id, "resolved");
         return Ok(inc);
+    }
+
+    /// <summary>
+    /// Escalate an incident to emergency services.
+    /// Finds the linked alert and broadcasts ReceiveEmergencyNotification to all clients.
+    /// </summary>
+    [HttpPatch("{id}/escalate")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> Escalate(string id)
+    {
+        var userId   = GetUserId();
+        var username = User.FindFirstValue(ClaimTypes.Name)
+                    ?? User.FindFirstValue("name")
+                    ?? "Operator";
+
+        // Find the alert linked to this incident
+        var alert = await _db.Alerts
+            .Include(a => a.Camera)
+            .Include(a => a.Incident)
+            .FirstOrDefaultAsync(a => a.IncidentId == id);
+
+        if (alert == null) return NotFound("No alert linked to this incident.");
+
+        // Save escalation on the alert
+        await _alertService.EscalateAsync(alert.Id, userId);
+
+        var now = DateTimeOffset.UtcNow;
+        var payload = new EmergencyNotificationDto
+        {
+            AlertId      = alert.Id,
+            IncidentId   = id,
+            Type         = alert.Type,
+            Message      = alert.Message,
+            CameraName   = alert.Camera?.Name ?? string.Empty,
+            Severity     = alert.Severity,
+            Timestamp    = new DateTimeOffset(DateTime.SpecifyKind(alert.Timestamp, DateTimeKind.Utc)),
+            ImageUrl     = alert.Incident?.ThumbnailUrl,
+            EscalatedBy  = username,
+            EscalatedAt  = now,
+        };
+
+        await _hub.SendEmergencyNotificationAsync(payload);
+        return Ok(payload);
     }
 
     private Guid GetUserId() =>
