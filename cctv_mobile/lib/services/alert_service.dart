@@ -4,12 +4,14 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:signalr_netcore/signalr_client.dart';
 import '../models/alert_model.dart';
+import '../models/emergency_notification_model.dart';
 import 'notification_service.dart';
 
 enum HubConnectionState { disconnected, connecting, connected, reconnecting }
 
 /// Singleton that manages:
-///  • SignalR real-time alert stream
+///  • SignalR real-time alert stream (NewAlert)
+///  • SignalR emergency escalation stream (ReceiveEmergencyNotification)
 ///  • REST fetch of historical alerts
 ///  • Server URL persistence via SharedPreferences
 class AlertService {
@@ -20,7 +22,7 @@ class AlertService {
   factory AlertService() => _instance;
   AlertService._internal();
 
-  // ── Runtime base URL (loaded from prefs on first use) ────────────────────
+  // ── Runtime base URL ──────────────────────────────────────────────────────
   String _baseUrl = _defaultBaseUrl;
   String get baseUrl => _baseUrl;
 
@@ -39,11 +41,14 @@ class AlertService {
   HubConnection? _connection;
   final NotificationService _notifications = NotificationService();
 
-  final _stateCtrl = StreamController<HubConnectionState>.broadcast();
-  final _alertCtrl = StreamController<AlertModel>.broadcast();
+  final _stateCtrl     = StreamController<HubConnectionState>.broadcast();
+  final _alertCtrl     = StreamController<AlertModel>.broadcast();
+  final _emergencyCtrl = StreamController<EmergencyNotificationModel>.broadcast();
 
-  Stream<HubConnectionState> get connectionState$ => _stateCtrl.stream;
-  Stream<AlertModel>          get alerts$          => _alertCtrl.stream;
+  Stream<HubConnectionState>          get connectionState$ => _stateCtrl.stream;
+  Stream<AlertModel>                  get alerts$          => _alertCtrl.stream;
+  /// Emits whenever an operator escalates an alert to emergency services.
+  Stream<EmergencyNotificationModel>  get emergency$       => _emergencyCtrl.stream;
 
   HubConnectionState _state = HubConnectionState.disconnected;
   HubConnectionState get currentState => _state;
@@ -72,6 +77,7 @@ class AlertService {
           .withAutomaticReconnect(retryDelays: [0, 2000, 5000, 10000, 30000])
           .build();
 
+      // ── Standard alert — goes to Alerts tab only ──────────────────────────
       _connection!.on('NewAlert', (List<Object?>? args) {
         if (args == null || args.isEmpty) return;
         try {
@@ -79,7 +85,22 @@ class AlertService {
           if (raw is Map<String, dynamic>) {
             final alert = AlertModel.fromJson(raw);
             _alertCtrl.add(alert);
-            _notifications.showAlertNotification(alert);
+            // Standard alerts do NOT trigger a push notification on mobile —
+            // they are listed in the Alerts tab only.
+          }
+        } catch (_) {}
+      });
+
+      // ── Emergency escalation — goes to Notifications tab + push notification ──
+      _connection!.on('ReceiveEmergencyNotification', (List<Object?>? args) {
+        if (args == null || args.isEmpty) return;
+        try {
+          final raw = args[0];
+          if (raw is Map<String, dynamic>) {
+            final emergency = EmergencyNotificationModel.fromJson(raw);
+            _emergencyCtrl.add(emergency);
+            // Show a high-priority push notification for emergency escalations
+            _notifications.showEmergencyNotification(emergency);
           }
         } catch (_) {}
       });

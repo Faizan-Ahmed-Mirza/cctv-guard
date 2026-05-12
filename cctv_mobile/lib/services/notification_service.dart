@@ -4,6 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_core/firebase_core.dart';
 import '../models/alert_model.dart';
+import '../models/emergency_notification_model.dart';
 
 /// Handles both:
 ///  1. Firebase Cloud Messaging (FCM) — push when app is background/killed
@@ -117,6 +118,60 @@ class NotificationService {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Show a high-priority emergency notification when an operator escalates an alert.
+  /// This uses a dedicated channel with max importance so it always appears as a heads-up.
+  Future<void> showEmergencyNotification(EmergencyNotificationModel emergency) async {
+    if (!_initialized) return;
+
+    const emergencyChannel = AndroidNotificationChannel(
+      'cctv_guard_emergency',
+      'CCTV Guard Emergency',
+      description: 'Operator-escalated emergency alerts',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+      enableLights: true,
+      ledColor: Color(0xFFef4444),
+    );
+
+    // Create the channel (no-op if already exists)
+    await _local
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(emergencyChannel);
+
+    final title = '🚨 EMERGENCY — ${emergency.type}';
+    final body  = '${emergency.cameraName}: ${emergency.message}\n'
+                  'Escalated by ${emergency.escalatedBy}';
+
+    await _local.show(
+      _notifId++,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          emergencyChannel.id,
+          emergencyChannel.name,
+          channelDescription: emergencyChannel.description,
+          importance: Importance.max,
+          priority: Priority.max,
+          styleInformation: BigTextStyleInformation(body),
+          color: const Color(0xFFef4444),
+          playSound: true,
+          enableVibration: true,
+          visibility: NotificationVisibility.public,
+          fullScreenIntent: true, // shows even on lock screen
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+          interruptionLevel: InterruptionLevel.critical,
+        ),
+      ),
+      payload: 'emergency:${emergency.alertId}',
+    );
   }
 
   Future<void> cancelAll() => _local.cancelAll();

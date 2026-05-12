@@ -75,6 +75,29 @@ public class AlertService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Mark an alert as escalated to emergency services.
+    /// Returns the full alert entity so the controller can broadcast it.
+    /// </summary>
+    public async Task<Alert?> EscalateAsync(string alertId, Guid userId)
+    {
+        var alert = await _db.Alerts
+            .Include(a => a.Camera)
+            .Include(a => a.Incident)
+            .FirstOrDefaultAsync(a => a.Id == alertId);
+
+        if (alert == null) return null;
+
+        // Mark read + escalated in the per-user read status
+        var rs = await GetOrCreateReadStatus(alertId, userId);
+        rs.IsRead      = true;
+        rs.IsEscalated = true;
+        rs.EscalatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return alert;
+    }
+
     private async Task<AlertReadStatus> GetOrCreateReadStatus(string alertId, Guid userId)
     {
         var rs = await _db.AlertReadStatuses

@@ -61,7 +61,21 @@ public static class DbSeeder
             await db.SaveChangesAsync();
         }
 
-        // Fix existing cameras that have ConfidenceThreshold = 0.85 (the old wrong default).
+        // ── Add IsEscalated / EscalatedAt columns to AlertReadStatuses if missing ──
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(@"
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_NAME = 'AlertReadStatuses' AND COLUMN_NAME = 'IsEscalated'
+                )
+                BEGIN
+                    ALTER TABLE AlertReadStatuses ADD IsEscalated BIT NOT NULL DEFAULT 0;
+                    ALTER TABLE AlertReadStatuses ADD EscalatedAt DATETIME2 NULL;
+                END
+            ");
+        }
+        catch { /* ignore — columns may already exist */ }
         // 0.85 blocks almost all detections — reset to 0.25 which is the correct working value.
         var highThresholdCameras = await db.Cameras
             .Where(c => c.ConfidenceThreshold >= 0.80m)

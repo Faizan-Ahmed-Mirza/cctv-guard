@@ -1,7 +1,6 @@
 using CCTV_Guard.Hubs;
 using CCTV_Guard.Models.DTOs.Alert;
 using Microsoft.AspNetCore.SignalR;
-
 namespace CCTV_Guard.Services;
 
 /// <summary>
@@ -44,4 +43,12 @@ public class HubNotificationService
     /// <summary>Broadcast an alert dismissal to ALL connected clients.</summary>
     public Task SendAlertDismissedAsync(string alertId, string userId) =>
         _hub.Clients.All.SendAsync("AlertDismissed", new { alertId, userId });
+
+    /// <summary>
+    /// Broadcast an emergency escalation event.
+    /// Angular clients receive it to update the alert card UI.
+    /// Flutter mobile clients receive it to push to the Notifications tab.
+    /// </summary>
+    public Task SendEmergencyNotificationAsync(EmergencyNotificationDto payload) =>
+        _hub.Clients.All.SendAsync("ReceiveEmergencyNotification", payload);
 }

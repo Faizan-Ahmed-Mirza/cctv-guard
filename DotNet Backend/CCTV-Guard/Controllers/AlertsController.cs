@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using CCTV_Guard.Models.DTOs.Alert;
 using CCTV_Guard.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -52,6 +53,43 @@ public class AlertsController : ControllerBase
         // Push real-time dismissal to all connected clients
         await _hub.SendAlertDismissedAsync(id, userId.ToString());
         return NoContent();
+    }
+
+    /// <summary>
+    /// Escalate an alert to emergency services.
+    /// Broadcasts ReceiveEmergencyNotification to all SignalR clients (Angular + Flutter).
+    /// </summary>
+    [HttpPatch("{id}/escalate")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> Escalate(string id)
+    {
+        var userId   = GetUserId();
+        var username = User.FindFirstValue(ClaimTypes.Name)
+                    ?? User.FindFirstValue("name")
+                    ?? "Operator";
+
+        var alert = await _alertService.EscalateAsync(id, userId);
+        if (alert == null) return NotFound();
+
+        var now = DateTimeOffset.UtcNow;
+        var payload = new EmergencyNotificationDto
+        {
+            AlertId      = alert.Id,
+            IncidentId   = alert.IncidentId,
+            Type         = alert.Type,
+            Message      = alert.Message,
+            CameraName   = alert.Camera?.Name ?? string.Empty,
+            Severity     = alert.Severity,
+            Timestamp    = new DateTimeOffset(DateTime.SpecifyKind(alert.Timestamp, DateTimeKind.Utc)),
+            ImageUrl     = alert.Incident?.ThumbnailUrl,
+            EscalatedBy  = username,
+            EscalatedAt  = now,
+        };
+
+        // Broadcast to ALL clients — Angular updates the card, Flutter pushes to Notifications tab
+        await _hub.SendEmergencyNotificationAsync(payload);
+
+        return Ok(payload);
     }
 
     private Guid GetUserId() =>

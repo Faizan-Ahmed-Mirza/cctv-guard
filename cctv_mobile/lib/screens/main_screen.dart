@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/alert_service.dart';
 import '../services/auth_service.dart';
 import '../models/alert_model.dart';
+import '../models/emergency_notification_model.dart';
 import 'alerts_tab.dart';
 import 'notifications_tab.dart';
 import 'settings_tab.dart';
@@ -17,11 +18,19 @@ class _MainScreenState extends State<MainScreen> {
   int _tab = 0;
   final AlertService _svc = AlertService();
 
+  // Alerts tab — all live + historical alerts
   final List<AlertModel> _liveAlerts = [];
-  int _unread = 0;
 
-  late StreamSubscription<HubConnectionState> _stateSub;
-  late StreamSubscription<AlertModel>          _alertSub;
+  // Notifications tab — ONLY operator-escalated emergencies
+  final List<EmergencyNotificationModel> _emergencies = [];
+
+  // Badge counts
+  int _alertUnread     = 0; // unread on Alerts tab
+  int _emergencyUnread = 0; // unread on Notifications tab
+
+  late StreamSubscription<HubConnectionState>         _stateSub;
+  late StreamSubscription<AlertModel>                 _alertSub;
+  late StreamSubscription<EmergencyNotificationModel> _emergencySub;
   HubConnectionState _connState = HubConnectionState.disconnected;
 
   @override
@@ -33,19 +42,29 @@ class _MainScreenState extends State<MainScreen> {
       if (mounted) setState(() => _connState = s);
     });
 
+    // Standard alerts → Alerts tab only, no notification
     _alertSub = _svc.alerts$.listen((alert) {
       if (mounted) {
         setState(() {
           _liveAlerts.insert(0, alert);
           if (_liveAlerts.length > 300) _liveAlerts.removeLast();
-          if (_tab != 0) _unread++;
+          if (_tab != 0) _alertUnread++;
         });
-        _showInAppPopup(alert);
+      }
+    });
+
+    // Emergency escalations → Notifications tab + push notification
+    _emergencySub = _svc.emergency$.listen((emergency) {
+      if (mounted) {
+        setState(() {
+          _emergencies.insert(0, emergency);
+          if (_tab != 1) _emergencyUnread++;
+        });
+        _showEmergencyPopup(emergency);
       }
     });
 
     _fetchHistory();
-
     if (_connState == HubConnectionState.disconnected) _connect();
   }
 
@@ -53,14 +72,10 @@ class _MainScreenState extends State<MainScreen> {
     final history = await _svc.fetchAlerts();
     if (mounted && history.isNotEmpty) {
       setState(() {
-        // Add history but avoid duplicates with live alerts
         final existingIds = _liveAlerts.map((a) => a.id).toSet();
         for (var a in history) {
-          if (!existingIds.contains(a.id)) {
-            _liveAlerts.add(a);
-          }
+          if (!existingIds.contains(a.id)) _liveAlerts.add(a);
         }
-        // Sort newest first
         _liveAlerts.sort((a, b) => b.timestamp.compareTo(a.timestamp));
       });
     }
@@ -70,6 +85,7 @@ class _MainScreenState extends State<MainScreen> {
   void dispose() {
     _stateSub.cancel();
     _alertSub.cancel();
+    _emergencySub.cancel();
     super.dispose();
   }
 
@@ -77,56 +93,19 @@ class _MainScreenState extends State<MainScreen> {
     try { await _svc.connect(); } catch (_) {}
   }
 
-  void _showInAppPopup(AlertModel alert) {
-    // Only show popup if not already on the alerts tab or if it's high severity
-    if (_tab == 0 && alert.severity != 'critical') return;
-
-    final color = Color(int.parse(alert.severityColor.replaceFirst('#', '0xFF')));
-
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: const Color(0xFF111827),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: color.withOpacity(0.5)),
-        ),
-        margin: const EdgeInsets.all(12),
-        duration: const Duration(seconds: 5),
-        content: Row(
-          children: [
-            Text(alert.icon, style: const TextStyle(fontSize: 22)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(alert.type,
-                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                  Text(alert.message,
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF9ca3af)),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                ],
-              ),
-            ),
-            TextButton(
-              onPressed: () {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                _onTab(0);
-              },
-              child: Text('VIEW', style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
+  /// Full-screen emergency popup — shown when an operator escalates an alert
+  void _showEmergencyPopup(EmergencyNotificationModel emergency) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => _EmergencyDialog(emergency: emergency),
     );
   }
 
   void _onTab(int i) => setState(() {
     _tab = i;
-    if (i == 0) _unread = 0;
+    if (i == 0) _alertUnread     = 0;
+    if (i == 1) _emergencyUnread = 0;
   });
 
   Future<void> _logout() async {
@@ -189,9 +168,9 @@ class _MainScreenState extends State<MainScreen> {
             liveAlerts: _liveAlerts,
             connState: _connState,
             onConnect: _connect,
-            onClear: () => setState(() { _liveAlerts.clear(); _unread = 0; }),
+            onClear: () => setState(() { _liveAlerts.clear(); _alertUnread = 0; }),
           ),
-          NotificationsTab(alerts: _liveAlerts),
+          NotificationsTab(emergencies: _emergencies),
           const SettingsTab(),
         ],
       ),
@@ -203,28 +182,30 @@ class _MainScreenState extends State<MainScreen> {
           currentIndex: _tab,
           onTap: _onTab,
           items: [
+            // Alerts tab — badge for unread standard alerts
             BottomNavigationBarItem(
-              icon: Stack(clipBehavior: Clip.none, children: [
-                const Icon(Icons.shield_outlined),
-                if (_unread > 0)
-                  Positioned(
-                    right: -6, top: -4,
-                    child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: const BoxDecoration(
-                          color: Color(0xFFef4444), shape: BoxShape.circle),
-                      child: Text('$_unread',
-                          style: const TextStyle(color: Colors.white, fontSize: 9,
-                              fontWeight: FontWeight.w700)),
-                    ),
-                  ),
-              ]),
-              activeIcon: const Icon(Icons.shield),
+              icon: _BadgeIcon(
+                icon: Icons.shield_outlined,
+                count: _alertUnread,
+              ),
+              activeIcon: _BadgeIcon(
+                icon: Icons.shield,
+                count: _alertUnread,
+              ),
               label: 'Alerts',
             ),
-            const BottomNavigationBarItem(
-              icon: Icon(Icons.notifications_outlined),
-              activeIcon: Icon(Icons.notifications),
+            // Notifications tab — badge for unread emergency escalations
+            BottomNavigationBarItem(
+              icon: _BadgeIcon(
+                icon: Icons.notifications_outlined,
+                count: _emergencyUnread,
+                color: const Color(0xFFef4444),
+              ),
+              activeIcon: _BadgeIcon(
+                icon: Icons.notifications,
+                count: _emergencyUnread,
+                color: const Color(0xFFef4444),
+              ),
               label: 'Notifications',
             ),
             const BottomNavigationBarItem(
@@ -236,6 +217,38 @@ class _MainScreenState extends State<MainScreen> {
         ),
       ),
     );
+  }
+}
+
+// ── Badge icon widget ─────────────────────────────────────────────────────────
+class _BadgeIcon extends StatelessWidget {
+  final IconData icon;
+  final int count;
+  final Color color;
+  const _BadgeIcon({
+    required this.icon,
+    required this.count,
+    this.color = const Color(0xFFef4444),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(clipBehavior: Clip.none, children: [
+      Icon(icon),
+      if (count > 0)
+        Positioned(
+          right: -6, top: -4,
+          child: Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            child: Text(
+              count > 99 ? '99+' : '$count',
+              style: const TextStyle(color: Colors.white, fontSize: 9,
+                  fontWeight: FontWeight.w700),
+            ),
+          ),
+        ),
+    ]);
   }
 }
 
@@ -277,4 +290,86 @@ class _ConnChip extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── Emergency popup dialog ────────────────────────────────────────────────────
+class _EmergencyDialog extends StatelessWidget {
+  final EmergencyNotificationModel emergency;
+  const _EmergencyDialog({required this.emergency});
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFef4444), width: 2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          // Header
+          Row(children: [
+            const Text('🚨', style: TextStyle(fontSize: 28)),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('EMERGENCY ESCALATED',
+                  style: TextStyle(color: Color(0xFFef4444), fontSize: 13,
+                      fontWeight: FontWeight.w800, letterSpacing: 1)),
+              Text(emergency.type,
+                  style: const TextStyle(color: Colors.white, fontSize: 16,
+                      fontWeight: FontWeight.w700)),
+            ])),
+          ]),
+          const SizedBox(height: 16),
+          const Divider(color: Color(0xFF1f2937)),
+          const SizedBox(height: 12),
+          // Details
+          _Row('Camera',  emergency.cameraName),
+          _Row('Message', emergency.message),
+          _Row('By',      emergency.escalatedBy),
+          _Row('Time',    _fmt(emergency.escalatedAt)),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFef4444),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Acknowledged',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  String _fmt(DateTime dt) {
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '${dt.day}/${dt.month}/${dt.year}  $h:$m';
+  }
+}
+
+class _Row extends StatelessWidget {
+  final String label;
+  final String value;
+  const _Row(this.label, this.value);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SizedBox(width: 70,
+          child: Text(label,
+              style: const TextStyle(color: Color(0xFF6b7280), fontSize: 12,
+                  fontWeight: FontWeight.w600))),
+      Expanded(child: Text(value,
+          style: const TextStyle(color: Color(0xFF9ca3af), fontSize: 13))),
+    ]),
+  );
 }

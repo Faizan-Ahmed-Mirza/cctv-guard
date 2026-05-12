@@ -1,45 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../models/alert_model.dart';
+import '../models/emergency_notification_model.dart';
 
-/// Shows all received alerts (live + history) grouped by date,
-/// acting as a notification history / inbox.
+/// Notifications tab — shows ONLY operator-escalated emergency alerts.
+/// Standard AI-generated alerts go to the Alerts tab.
+/// This tab is populated exclusively by ReceiveEmergencyNotification SignalR events.
 class NotificationsTab extends StatelessWidget {
-  final List<AlertModel> alerts;
-  const NotificationsTab({super.key, required this.alerts});
+  final List<EmergencyNotificationModel> emergencies;
+  const NotificationsTab({super.key, required this.emergencies});
 
   @override
   Widget build(BuildContext context) {
-    // Only show Critical and High severity alerts in the Notifications tab
-    final filteredAlerts = alerts.where((a) =>
-      a.severity.toLowerCase() == 'critical' ||
-      a.severity.toLowerCase() == 'high'
-    ).toList();
-
-    if (filteredAlerts.isEmpty) {
-      return const Center(child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.mark_email_read_outlined, size: 64, color: Color(0xFF374151)),
-          SizedBox(height: 16),
-          Text('No urgent notifications',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700,
-                  color: Color(0xFF6b7280))),
-          SizedBox(height: 8),
-          Text('Only critical and high priority alerts\nwill appear here.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Color(0xFF4b5563))),
-        ],
-      ));
+    if (emergencies.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.notifications_off_outlined, size: 64, color: Color(0xFF374151)),
+            SizedBox(height: 16),
+            Text('No Emergency Notifications',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700,
+                    color: Color(0xFF6b7280))),
+            SizedBox(height: 8),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                'This tab shows alerts escalated to emergency services by an operator.\n'
+                'Standard AI alerts appear in the Alerts tab.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Color(0xFF4b5563)),
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
     // Group by date
-    final grouped = <String, List<AlertModel>>{};
-    for (final a in filteredAlerts) {
-      final key = DateFormat('EEEE, d MMM yyyy').format(a.timestamp);
-      grouped.putIfAbsent(key, () => []).add(a);
+    final grouped = <String, List<EmergencyNotificationModel>>{};
+    for (final e in emergencies) {
+      final key = DateFormat('EEEE, d MMM yyyy').format(e.escalatedAt);
+      grouped.putIfAbsent(key, () => []).add(e);
     }
-
     final sections = grouped.entries.toList();
 
     return ListView.builder(
@@ -48,94 +50,129 @@ class NotificationsTab extends StatelessWidget {
       itemBuilder: (_, si) {
         final section = sections[si];
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Date header
           Padding(
             padding: EdgeInsets.only(bottom: 10, top: si == 0 ? 0 : 16),
             child: Text(section.key,
                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
                     color: Color(0xFF6b7280), letterSpacing: 0.5)),
           ),
-          ...section.value.map((a) => _NotifTile(alert: a)),
+          ...section.value.map((e) => _EmergencyTile(emergency: e)),
         ]);
       },
     );
   }
 }
 
-class _NotifTile extends StatelessWidget {
-  final AlertModel alert;
-  const _NotifTile({required this.alert});
+class _EmergencyTile extends StatelessWidget {
+  final EmergencyNotificationModel emergency;
+  const _EmergencyTile({required this.emergency});
 
   @override
   Widget build(BuildContext context) {
-    final color = Color(int.parse(alert.severityColor.replaceFirst('#', '0xFF')));
-    final time  = DateFormat('HH:mm').format(alert.timestamp);
+    final color = Color(int.parse(emergency.severityColor.replaceFirst('#', '0xFF')));
+    final time  = DateFormat('HH:mm').format(emergency.escalatedAt);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(13),
+      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: const Color(0xFF111827),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.25)),
+        border: Border.all(color: color.withOpacity(0.4), width: 1.5),
+        boxShadow: [
+          BoxShadow(color: color.withOpacity(0.08), blurRadius: 8, offset: const Offset(0, 2)),
+        ],
       ),
-      child: Row(children: [
-        // Icon circle
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Emergency header bar
         Container(
-          width: 42, height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.14),
-            borderRadius: BorderRadius.circular(12),
+            color: color.withOpacity(0.12),
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(11), topRight: Radius.circular(11),
+            ),
           ),
-          child: Center(child: Text(alert.icon,
-              style: const TextStyle(fontSize: 20))),
-        ),
-        const SizedBox(width: 12),
-        // Content
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(child: Text(alert.type,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
-                    color: Colors.white))),
+          child: Row(children: [
+            const Text('🚨', style: TextStyle(fontSize: 14)),
+            const SizedBox(width: 6),
+            Text('EMERGENCY ESCALATED',
+                style: TextStyle(color: color, fontSize: 10,
+                    fontWeight: FontWeight.w800, letterSpacing: 1)),
+            const Spacer(),
             Text(time, style: const TextStyle(fontSize: 11, color: Color(0xFF4b5563))),
           ]),
-          const SizedBox(height: 3),
-          Text(alert.message,
-              style: const TextStyle(fontSize: 12, color: Color(0xFF9ca3af)),
-              maxLines: 2, overflow: TextOverflow.ellipsis),
-          if (alert.imageUrl != null && alert.imageUrl!.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            ClipRRect(
+        ),
+
+        // Content
+        Padding(
+          padding: const EdgeInsets.all(13),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Icon
+            Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.14),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(child: Text(emergency.icon,
+                  style: const TextStyle(fontSize: 22))),
+            ),
+            const SizedBox(width: 12),
+            // Details
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(emergency.type,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
+                      color: Colors.white)),
+              const SizedBox(height: 3),
+              Text(emergency.message,
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF9ca3af)),
+                  maxLines: 2, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 8),
+              // Camera + severity + escalated by
+              Wrap(spacing: 8, runSpacing: 4, children: [
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.videocam_outlined, size: 11, color: Color(0xFF6b7280)),
+                  const SizedBox(width: 3),
+                  Text(emergency.cameraName,
+                      style: const TextStyle(fontSize: 11, color: Color(0xFF6b7280))),
+                ]),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: color.withOpacity(0.3)),
+                  ),
+                  child: Text(emergency.severity.toUpperCase(),
+                      style: TextStyle(color: color, fontSize: 9,
+                          fontWeight: FontWeight.w700)),
+                ),
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.person_outline, size: 11, color: Color(0xFF6b7280)),
+                  const SizedBox(width: 3),
+                  Text('by ${emergency.escalatedBy}',
+                      style: const TextStyle(fontSize: 11, color: Color(0xFF6b7280))),
+                ]),
+              ]),
+            ])),
+          ]),
+        ),
+
+        // Thumbnail image if available
+        if (emergency.imageUrl != null && emergency.imageUrl!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(13, 0, 13, 13),
+            child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: Image.network(
-                alert.imageUrl!,
-                height: 120,
+                emergency.imageUrl!,
+                height: 140,
                 width: double.infinity,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => const SizedBox.shrink(),
               ),
             ),
-          ],
-          const SizedBox(height: 8),
-          Row(children: [
-            const Icon(Icons.videocam_outlined, size: 11, color: Color(0xFF6b7280)),
-            const SizedBox(width: 3),
-            Text(alert.cameraName,
-                style: const TextStyle(fontSize: 11, color: Color(0xFF6b7280))),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: color.withOpacity(0.3)),
-              ),
-              child: Text(alert.severity.toUpperCase(),
-                  style: TextStyle(color: color, fontSize: 9,
-                      fontWeight: FontWeight.w700)),
-            ),
-          ]),
-        ])),
+          ),
       ]),
     );
   }
